@@ -1,0 +1,97 @@
+{
+  "nav": {
+    "title": "Music Player",
+    "library": "Library",
+    "theme": {
+      "dark": "Dark Mode",
+      "light": "Light Mode"
+    }
+  },
+  "player": {
+    "noTrack": "No track selected",
+    "fileNotFound": "File not found or has been deleted",
+    "bitrate": "{value}kbps",
+    "sampleRate": "{value}kHz",
+    "channels": "{value} channel | {value} channels"
+  },
+  "controls": {
+    "play": "Play",
+    "pause": "Pause",
+    "previous": "Previous",
+    "next": "Next",
+    "volume": "Volume",
+    "mute": "Mute",
+    "shuffle": "Shuffle",
+    "repeat": "Repeat",
+    "repeatList": "List Repeat",
+    "repeatOne": "Repeat One",
+    "delete": "Delete"
+  },
+  "library": {
+    "title": "Music Library",
+    "noTracks": "Library is empty",
+    "addTrack": "Add Track",
+    "addTrackDesc": "Add a music folder to start listening to your music",
+    "refresh": "Refresh",
+    "folders": "Music Folders",
+    "selectDirectory": "Select Directory",
+    "config": "Configuration",
+    "searchPlaceholder": "Search for songs, artists, albums...",
+    "playlists": "Playlists",
+    "songs": "Songs",
+    "directories": "Directories",
+    "subdirectories": "Subdirectories",
+    "searchResults": "Search Results",
+    "playAll": "Play All",
+    "emptyTitle": "Get Started with Your Library",
+    "emptyDescription": "Select a directory containing your music files to get started.",
+    "selectFirstDirectory": "Select First Directory",
+    "loading": "Loading...",
+    "toggleSortOrder": "Toggle sort order"
+  },
+  "playlist": {
+    "title": "Playlist",
+    "empty": "Playlist is empty",
+    "clear": "Clear Playlist",
+    "songs": "{count} song | {count} songs",
+    "addSongs": "Add songs to your playlist to start listening"
+  },
+  "lyrics": {
+    "title": "Lyrics",
+    "notFound": "Lyrics not found",
+    "loading": "Loading lyrics..."
+  },
+  "config": {
+    "title": "Configuration",
+    "directoryScan": "Directory Scan",
+    "enableSubdirectoryScan": "Enable subdirectory scanning",
+    "maxDepth": "Maximum scan depth",
+    "ignoreHiddenFolders": "Ignore hidden folders",
+    "titleExtraction": "Title Extraction",
+    "preferMetadata": "Prefer metadata",
+    "hideFileExtension": "Hide file extension",
+    "parseArtistTitle": "Parse artist and title from filename",
+    "separator": "Separator",
+    "sortOrder": "Sort Order",
+    "playlist": "Playlist",
+    "generateAllSongsPlaylist": "Generate \"All Songs\" playlist",
+    "folderBasedPlaylists": "Generate playlists from folders",
+    "playlistNameFormat": "Playlist name format",
+    "playlistSettings": "Playlist Settings",
+    "musicFolders": "Music Folders",
+    "noMusicFolders": "No music folders added yet",
+    "addFolder": "Add Folder",
+    "remove": "Remove",
+    "save": "Save",
+    "reset": "Reset",
+    "general": "General",
+    "generalSettings": "General Settings",
+    "language": "Language",
+    "startupLoadLastConfig": "Load last configuration on startup",
+    "autoSaveConfig": "Auto save configuration"
+  },
+  "themeSelector": {
+    "chooseThemeColor": "Choose Theme Color",
+    "customColor": "Custom Color:"
+  }
+}

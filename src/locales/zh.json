@@ -1,0 +1,97 @@
+{
+  "nav": {
+    "title": "Music Player",
+    "library": "音乐库",
+    "theme": {
+      "dark": "深色模式",
+      "light": "浅色模式"
+    }
+  },
+  "player": {
+    "noTrack": "未选择曲目",
+    "fileNotFound": "文件不存在或已被删除",
+    "bitrate": "{value}kbps",
+    "sampleRate": "{value}kHz",
+    "channels": "{value} 声道"
+  },
+  "controls": {
+    "play": "播放",
+    "pause": "暂停",
+    "previous": "上一曲",
+    "next": "下一曲",
+    "volume": "音量",
+    "mute": "静音",
+    "shuffle": "随机播放",
+    "repeat": "循环播放",
+    "repeatList": "列表循环",
+    "repeatOne": "单曲循环",
+    "delete": "删除"
+  },
+  "library": {
+    "title": "音乐库",
+    "noTracks": "音乐库为空",
+    "addTrack": "添加音乐",
+    "addTrackDesc": "添加音乐文件夹以开始播放音乐",
+    "refresh": "刷新",
+    "folders": "音乐文件夹",
+    "selectDirectory": "选择目录",
+    "config": "配置",
+    "searchPlaceholder": "搜索歌曲、艺术家、专辑...",
+    "playlists": "播放列表",
+    "songs": "歌曲",
+    "directories": "目录",
+    "subdirectories": "子目录",
+    "searchResults": "搜索结果",
+    "playAll": "播放全部",
+    "emptyTitle": "开始使用音乐库",
+    "emptyDescription": "选择包含音乐文件的目录来开始使用",
+    "selectFirstDirectory": "选择第一个目录",
+    "loading": "加载中...",
+    "toggleSortOrder": "切换排序顺序"
+  },
+  "playlist": {
+    "title": "播放列表",
+    "empty": "播放列表为空",
+    "clear": "清空播放列表",
+    "songs": "{count} 首歌曲",
+    "addSongs": "添加歌曲到播放列表以开始播放"
+  },
+  "lyrics": {
+    "title": "歌词",
+    "notFound": "未找到歌词",
+    "loading": "加载歌词中..."
+  },
+  "config": {
+    "title": "配置",
+    "directoryScan": "目录扫描",
+    "enableSubdirectoryScan": "启用子目录扫描",
+    "maxDepth": "最大扫描深度",
+    "ignoreHiddenFolders": "忽略隐藏文件夹",
+    "titleExtraction": "标题提取",
+    "preferMetadata": "优先使用元数据",
+    "hideFileExtension": "隐藏文件扩展名",
+    "parseArtistTitle": "从文件名解析艺术家和标题",
+    "separator": "分隔符",
+    "sortOrder": "排序顺序",
+    "playlist": "播放列表",
+    "generateAllSongsPlaylist": "生成\"全部歌曲\"播放列表",
+    "folderBasedPlaylists": "基于文件夹生成播放列表",
+    "playlistNameFormat": "播放列表名称格式",
+    "playlistSettings": "播放列表设置",
+    "musicFolders": "音乐文件夹",
+    "noMusicFolders": "还没有添加音乐文件夹",
+    "addFolder": "添加文件夹",
+    "remove": "移除",
+    "save": "保存",
+    "reset": "重置",
+    "general": "通用",
+    "generalSettings": "通用设置",
+    "language": "语言",
+    "startupLoadLastConfig": "启动时加载上次配置",
+    "autoSaveConfig": "自动保存配置"
+  },
+  "themeSelector": {
+    "chooseThemeColor": "选择主题颜色",
+    "customColor": "自定义颜色:"
+  }
+}

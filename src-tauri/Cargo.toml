@@ -1,0 +1,44 @@
+[package]
+name = "music-player"
+version = "0.1.0"
+description = "Music App"
+authors = ["jdbEwl"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.70"
+
+# 修复 default-run - 应该是字符串
+default-run = "music-player"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = ["rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rodio = { version = "0.18.0", features = ["wav", "vorbis", "flac", "mp3"] }
+dirs = "5.0"
+walkdir = "2.3"
+anyhow = "1.0"
+lofty = "0.18"
+base64 = "0.21"
+symphonia = { version = "0.5", features = ["flac", "vorbis", "aac", "alac", "aiff", "wav"] }
+
+# 使用稳定版本
+tauri-plugin-dialog = { version = "2.3.3", features = [] }
+tauri-plugin-fs = { version = "2.4.4", features = [] }
+tauri-plugin-shell = { version = "2.3.3", features = [] }
+tokio = { version = "1.48", features = ["full"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "music-player"
+path = "src/main.rs"
+
+[profile.release]
+debug = true
