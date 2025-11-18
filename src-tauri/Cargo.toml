@@ -1,14 +1,14 @@
 [package]
 name = "music-player"
 version = "0.1.0"
-description = "Music App"
+description = "Mer Music App"
 authors = ["jdbEwl"]
 license = ""
 repository = ""
 edition = "2021"
 rust-version = "1.70"
 
-default-run = "music-player"
+default-run = "mer-music-player"
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
@@ -29,12 +29,27 @@ tauri-plugin-fs = { version = "2.4.4", features = [] }
 tauri-plugin-shell = { version = "2.3.3", features = [] }
 tokio = { version = "1.48", features = ["full"] }
 
+[lints.rust]
+unsafe_code = "forbid"
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
+unused_qualifications = "warn"
+variant_size_differences = "warn"
+
+[lints.clippy]
+all = "warn"
+nursery = "warn"
+pedantic = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [[bin]]
-name = "music-player"
+name = "mer-music-player"
 path = "src/main.rs"
 
 [profile.release]

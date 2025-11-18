@@ -1,4 +1,5 @@
-![pic](/RISE-grey-light-ass.png)
+![light-pic](/RISE-darkpink-light-ass.png)
+![dark-pic](/Calling-grey-dark-ass.png)
 
 > 如你所见，这就是一个非常简单的音乐播放器，实现了本地音乐播放器的我和另外一个使用IMP的朋友大部分能用上的功能，部分功能未经验证其高可靠性。
 

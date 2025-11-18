@@ -1,8 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod commands;
 mod audio_decoder;
 mod config;
+mod playback;
+mod filesystem;
+mod metadata;
+mod config_commands;
+mod system;
+mod error;
+
+// 重新导出所有命令
+pub use playback::*;
+pub use filesystem::*;
+pub use metadata::*;
+pub use config_commands::*;
+pub use system::*;
 
 use std::sync::{Arc, Mutex};
 use rodio::{OutputStream, Sink};
@@ -22,7 +34,7 @@ pub struct AppState {
 }
 
 fn main() {
-    // Create the audio stream and sink at startup
+    // 创建音频输出流
     let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to create output stream");
     // We need to keep the stream alive, but it's not Send or Sync.
     // Leaking it is a simple way to keep it alive for the lifetime of the app.
@@ -30,15 +42,15 @@ fn main() {
 
     let sink = Sink::try_new(&stream_handle).expect("Failed to create sink");
 
-    // Create the config manager
+    // 创建配置管理器
     let config_manager = ConfigManager::new();
     
-    // Initialize config files on startup
+    // 初始化配置文件
     if let Err(e) = config_manager.initialize_config_files() {
         eprintln!("Failed to initialize config files: {}", e);
     }
 
-    // Create the managed state
+    // 创建应用程序状态
     let app_state = AppState {
         player: PlayerState {
             sink: Arc::new(Mutex::new(sink)),
@@ -50,12 +62,12 @@ fn main() {
     };
 
     tauri::Builder::default()
-        .manage(app_state) // Add the state to the app
-        .setup(|_app| {
+        .manage(app_state)
+        .setup(|app| {
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
-                let window = _app.get_webview_window("main").unwrap();
+                let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
             Ok(())
@@ -64,39 +76,42 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
-            // Existing commands
-            commands::read_directory,
-            commands::get_audio_files,
-            commands::read_lyrics_file,
-            commands::get_track_metadata,
-            commands::get_all_audio_files,
+            // 文件系统命令
+            read_directory,
+            get_audio_files,
+            read_lyrics_file,
+            get_all_audio_files,
+            check_file_exists,
             
-            // New audio control commands
-            commands::play_track,
-            commands::pause_track,
-            commands::resume_track,
-            commands::set_volume,
-            commands::get_playback_status,
-            commands::seek_track,
-            commands::is_track_finished,
+            // 元数据命令
+            get_track_metadata,
+            
+            // 播放命令
+            play_track,
+            pause_track,
+            resume_track,
+            set_volume,
+            get_playback_status,
+            seek_track,
+            is_track_finished,
 
-            // File system commands
-            commands::check_file_exists,
-
-            // Config management commands
-            commands::initialize_config_files,
-            commands::load_config,
-            commands::save_config,
-            commands::export_config,
-            commands::import_config,
-            commands::reset_config,
-            // Music directory management commands
-            commands::add_music_directory,
-            commands::remove_music_directory,
-            commands::set_music_directories,
-            commands::get_music_directories,
-            // Font management commands
-            commands::get_system_fonts,
+            // 配置命令
+            initialize_config_files,
+            load_config,
+            save_config,
+            export_config,
+            import_config,
+            reset_config,
+            
+            // 音乐目录命令
+            add_music_directory,
+            remove_music_directory,
+            set_music_directories,
+            get_music_directories,
+            
+            // 系统命令
+            get_system_info,
+            get_system_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -52,7 +52,7 @@ export default {
     name: "LyricsDisplay",
     setup() {
         const playerStore = usePlayerStore();
-        const configStore = useConfigStore(); // Initialize configStore
+        const configStore = useConfigStore();
         const lyrics = ref([]);
         const loading = ref(false);
         const containerRef = ref(null);
@@ -263,7 +263,7 @@ export default {
                                 container.scrollTop = finalScroll;
                                 // 如果是用户点击，已经在外部设置了定时器重置标志，这里不再重复设置
                             } else {
-                                smoothScrollTo(container, finalScroll, 300); // 300ms duration for smooth scroll
+                                smoothScrollTo(container, finalScroll, 500);
                             }
                         }
                     });

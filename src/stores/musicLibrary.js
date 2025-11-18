@@ -1,12 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
-import FileUtils from '../utils/fileUtils'
 import { useConfigStore } from './config.js'
 
-/**
- * 合并后的音乐库和播放列表存储
- * 整合了原library.js和playlist.js的功能
- */
 export const useMusicLibraryStore = defineStore('musicLibrary', {
   state: () => ({
     // 音乐文件夹管理

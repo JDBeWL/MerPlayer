@@ -88,7 +88,7 @@ export const useConfigStore = defineStore('config', {
         const config = await invoke('load_config')
         if (config) {
           this.$patch(config)
-          // Apply the loaded theme preference to the theme store
+          // 更新主题
           const themeStore = useThemeStore()
           themeStore.setThemePreference(this.general.theme)
           console.log('Configuration loaded successfully')
@@ -130,9 +130,9 @@ export const useConfigStore = defineStore('config', {
      */
     async saveConfigNow() {
       try {
-        // Create configuration object deep copy
+        // 深拷贝配置，以便在保存前更新主题
         const configToSave = JSON.parse(JSON.stringify(this.$state))
-        // Update theme preference from theme store before saving
+        // 更新主题
         const themeStore = useThemeStore()
         configToSave.general.theme = themeStore.themePreference
         await invoke('save_config', { config: configToSave })

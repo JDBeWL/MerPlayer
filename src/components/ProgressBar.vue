@@ -1,7 +1,6 @@
 <template>
   <div class="progress-container">
     <div class="progress-bar" ref="progressBar" @click="handleProgressClick">
-      <div class="progress-bar-buffer" :style="{ width: `${bufferPercent}%` }"></div>
       <div class="progress-bar-fill" :style="{ width: `${progressPercent}%` }"></div>
     </div>
     <div class="time-display">
@@ -21,13 +20,6 @@ const progressBar = ref(null)
 const progressPercent = computed(() => {
   if (playerStore.duration === 0) return 0
   return (playerStore.currentTime / playerStore.duration) * 100
-})
-
-// In a real app, you would calculate buffer based on actual audio buffering
-const bufferPercent = computed(() => {
-  if (playerStore.duration === 0) return 0
-  // Simulate buffer - in a real app, you'd use the audio element's buffered property
-  return Math.min(100, (playerStore.currentTime / playerStore.duration) * 100 + 10)
 })
 
 const handleProgressClick = (event) => {
@@ -74,15 +66,6 @@ const formatTime = (seconds) => {
   background-color: var(--md-sys-color-primary);
   border-radius: 2px;
   transition: width 0.1s linear;
-}
-
-.progress-bar-buffer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  background-color: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent);
-  border-radius: 2px;
 }
 
 .time-display {

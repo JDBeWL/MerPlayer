@@ -42,8 +42,8 @@
               </span>
             </div>
             <div class="list-item-content">
-              <div class="list-item-headline">{{ getTrackTitle(track) }}</div>
-              <div class="list-item-supporting">{{ getTrackArtist(track) }}</div>
+              <div class="list-item-headline" :title="getTrackTitle(track)">{{ getTrackTitle(track) }}</div>
+              <div class="list-item-supporting" :title="getTrackArtist(track)">{{ getTrackArtist(track) }}</div>
             </div>
             <div class="list-item-trailing">
               <button class="icon-button" @click.stop="removeTrack(index)">
@@ -113,6 +113,8 @@ const getTrackArtist = (track) => {
   // 如果还没处理完，暂时返回空或track中已有的artist信息
   return track.artist || ''
 }
+
+
 
 // 异步处理音轨信息
 const processTrackInfo = async (trackPath) => {
@@ -186,7 +188,7 @@ const playTrack = (track) => {
 }
 
 const removeTrack = (index) => {
-  // Create a new playlist without the removed track
+  // 创建一个新的播放列表，并移除指定索引的音轨
   const newPlaylist = [...playlist.value]
   newPlaylist.splice(index, 1)
   playerStore.loadPlaylist(newPlaylist)
@@ -200,7 +202,7 @@ const removeTrack = (index) => {
   right: 0;
   width: 400px;
   height: 100%;
-  background-color: var(--md-sys-color-surface); /* Changed to surface for guaranteed opacity */
+  background-color: var(--md-sys-color-surface);
   box-shadow: var(--md-sys-elevation-level2);
   z-index: 1000;
   display: flex;
@@ -289,11 +291,13 @@ const removeTrack = (index) => {
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
+  border-radius: 8px;
 }
 
 .list-item:hover {
   background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
   border-radius: 8px;
+  transform: translateX(2px);
 }
 
 .list-item.selected {
@@ -313,12 +317,20 @@ const removeTrack = (index) => {
 
 .list-item-content {
   flex: 1;
+  min-width: 0; /* 允许内容收缩 */
+  overflow: hidden;
 }
 
 .list-item-headline {
   font-size: 16px;
   font-weight: 400;
   color: var(--md-sys-color-on-surface);
+  /* 处理长文本 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* 添加平滑过渡 */
+  transition: all 0.2s ease;
 }
 
 .list-item.selected .list-item-headline {
@@ -328,11 +340,19 @@ const removeTrack = (index) => {
 .list-item-supporting {
   font-size: 14px;
   color: var(--md-sys-color-on-surface-variant);
+  /* 处理长文本 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* 添加平滑过渡 */
+  transition: all 0.2s ease;
 }
 
 .list-item.selected .list-item-supporting {
   color: var(--theme-on-primary-container);
 }
+
+
 
 .list-item-trailing {
   display: flex;
@@ -346,6 +366,17 @@ const removeTrack = (index) => {
   height: 24px;
   width: 24px;
   color: inherit;
+}
+
+/* 响应式设计 - 调整播放列表项在小屏幕上的字体 */
+@media (max-width: 480px) {
+  .list-item-headline {
+    font-size: 14px;
+  }
+  
+  .list-item-supporting {
+    font-size: 12px;
+  }
 }
 
 .bar {

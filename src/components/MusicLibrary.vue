@@ -44,8 +44,8 @@
               <span class="material-symbols-rounded">music_note</span>
             </div>
             <div class="list-item-content">
-              <div class="list-item-headline">{{ file.displayTitle || file.name }}</div>
-              <div class="list-item-supporting">
+              <div class="list-item-headline" :title="file.displayTitle || file.name">{{ file.displayTitle || file.name }}</div>
+              <div class="list-item-supporting" :title="(file.displayArtist || file.artist || '') + (file.displayArtist ? ' • ' : '') + file.folderName">
                 {{ file.displayArtist || file.artist || '' }} 
                 {{ file.displayArtist ? '•' : '' }} 
                 {{ file.folderName }}
@@ -184,10 +184,10 @@ const enhancedPlaylists = computed(() => {
   let allSongsFiles = []
   const uniqueFiles = new Set()
   
-  // Check if there's already an "All Songs" playlist from the backend
+  // 检查是否有全部歌曲播放列表
   const hasAllSongsPlaylist = playlists.value.some(p => p.name === '全部歌曲')
 
-  // Aggregate all songs from all playlists (excluding the "All Songs" playlist if it exists)
+  // 处理全部歌曲播放列表
   for (const playlist of playlists.value) {
     if (playlist.files && playlist.name !== '全部歌曲') {
       for (const file of playlist.files) {
@@ -199,7 +199,7 @@ const enhancedPlaylists = computed(() => {
     }
   }
 
-  // Create "All Songs" playlist only if it doesn't exist from the backend
+  // 如果有全部歌曲，则添加到播放列表中
   if (allSongsFiles.length > 0 && !hasAllSongsPlaylist) {
     allPlaylists.push({
       name: `全部歌曲 (${allSongsFiles.length} 首)`,
@@ -211,10 +211,10 @@ const enhancedPlaylists = computed(() => {
     })
   }
 
-  // Add individual playlists from each folder
+  // 处理其他播放列表
   for (const playlist of playlists.value) {
     if (playlist.files && playlist.files.length > 0) {
-      // Use a different name format for the "All Songs" playlist from backend to distinguish
+      // 处理播放列表名称，如果为"全部歌曲"，则加上文件数量
       let playlistName = playlist.name
       if (playlist.name === '全部歌曲') {
         playlistName = `全部歌曲 (${playlist.files.length} 首)`
@@ -225,24 +225,24 @@ const enhancedPlaylists = computed(() => {
       allPlaylists.push({
         ...playlist,
         totalFiles: playlist.files.length,
-        subdirectoryCount: 0, // Not directly available from aggregated playlists
+        subdirectoryCount: 0,
         name: playlistName,
         isAllSongsPlaylist: playlist.name === '全部歌曲'
       })
     }
   }
 
-  // Sort playlists A-Z or Z-A based on config, but keep "全部歌曲" at the top
+  // 根据配置排序
   const isAscOrder = configStore.playlist.sortOrder === 'asc'
   return allPlaylists.sort((a, b) => {
-    // If both are "All Songs" playlists, maintain order
+    // 如果两个都是"全部歌曲"，则保持原始顺序
     if (a.isAllSongsPlaylist && b.isAllSongsPlaylist) return 0
     
-    // "All Songs" playlists always come first
+    // 如果一个是"全部歌曲"，则排在前面
     if (a.isAllSongsPlaylist) return -1
     if (b.isAllSongsPlaylist) return 1
     
-    // For other playlists, sort by name (case-insensitive) based on the sort order
+    // 如果两个都不是"全部歌曲"，则按名称排序
     const nameA = a.name.toLowerCase()
     const nameB = b.name.toLowerCase()
     
@@ -288,6 +288,8 @@ const refreshDirectoryTrees = async () => {
   }
 }
 
+
+
 const calculateDirectoryStats = async () => {
   if (!playlists.value.length) {
     Object.assign(directoryStats, {
@@ -310,7 +312,7 @@ const calculateDirectoryStats = async () => {
       playlist.files.forEach(file => allAudioFiles.add(file.path))
     }
     if (playlist.name !== '全部歌曲' && playlist.files && playlist.files.length > 0) {
-      // Assuming each playlist represents a directory for stats purposes
+      // 如果不是"全部歌曲"，则添加到目录中
       allDirectories.add(playlist.name); 
     }
   }
@@ -335,7 +337,7 @@ const handleSearch = async () => {
   
   searchResults.value = []
   const lowerCaseSearchTerm = searchTerm.value.toLowerCase()
-  const uniqueResults = new Map() // Use Map to store unique results by path
+  const uniqueResults = new Map() // 使用Map来去重
 
   for (const playlist of playlists.value) {
     if (playlist.files) {
@@ -346,7 +348,7 @@ const handleSearch = async () => {
         (file.name && file.name.toLowerCase().includes(lowerCaseSearchTerm))
       )
       
-      // Add unique results to Map
+      // 去重
       for (const file of results) {
         if (!uniqueResults.has(file.path)) {
           uniqueResults.set(file.path, file)
@@ -355,7 +357,7 @@ const handleSearch = async () => {
     }
   }
   
-  // Convert Map to array and sort A-Z or Z-A by title or name based on config
+  // 根据配置排序
   const isAscOrder = configStore.playlist.sortOrder === 'asc'
   searchResults.value = Array.from(uniqueResults.values()).sort((a, b) => {
     const titleA = (a.title || a.name || '').toLowerCase()
@@ -393,6 +395,20 @@ const openFolderDialog = async () => {
       const result = await musicLibraryStore.addMusicFolder(selected)
       await calculateDirectoryStats()
       console.log(result.message)
+      
+      // 检查是否是初次添加音乐库
+      if (musicLibraryStore.musicFolders.length === 1) {
+        console.log('初次添加音乐库，正在刷新配置和播放列表...')
+        
+        // 初次添加音乐库时，主动加载配置
+        await configStore.loadConfig()
+        
+        // 刷新音乐文件夹以生成播放列表
+        await musicLibraryStore.refreshMusicFolders()
+        await calculateDirectoryStats()
+        
+        console.log('初次音乐库配置和播放列表生成完成')
+      }
     }
   } catch (error) {
     console.error('Error opening folder dialog:', error)
@@ -448,7 +464,7 @@ const playFile = (file) => {
   width: 450px;
   max-width: 90vw;
   height: 100%;
-  background-color: var(--md-sys-color-surface); /* Changed to surface for guaranteed opacity */
+  background-color: var(--md-sys-color-surface);
   box-shadow: var(--md-sys-elevation-level2);
   z-index: 1000;
   display: flex;
@@ -466,6 +482,14 @@ const playFile = (file) => {
   .music-library {
     width: 100vw;
     max-width: 100vw;
+  }
+  
+  .list-item-headline {
+    font-size: 14px;
+  }
+  
+  .list-item-supporting {
+    font-size: 12px;
   }
 }
 
@@ -505,7 +529,7 @@ const playFile = (file) => {
   padding: 8px 12px;
   height: 48px; /* 固定高度，与搜索后的高度一致 */
   box-sizing: border-box; /* 确保padding包含在高度内 */
-  border: 1px solid var(--md-sys-color-outline); /* Added border */
+  border: 1px solid var(--md-sys-color-outline);
 }
 
 .search-input-wrapper .material-symbols-rounded {
@@ -567,11 +591,14 @@ const playFile = (file) => {
   align-items: center;
   padding: 12px 16px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  border-radius: 8px;
+  margin: 2px 0;
 }
 
 .list-item:hover {
   background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+  transform: translateX(2px);
 }
 
 .list-item:active {
@@ -587,6 +614,9 @@ const playFile = (file) => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+  /* 确保可以正确计算高度 */
+  min-height: 44px;
 }
 
 .list-item-headline {
@@ -596,6 +626,11 @@ const playFile = (file) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 添加平滑过渡 */
+  transition: all 0.2s ease;
+  line-height: 1.4;
+  /* 确保短标题不会有多余空间 */
+  max-height: 1.4em; /* 约1行的高度 */
 }
 
 .list-item-supporting {
@@ -604,7 +639,14 @@ const playFile = (file) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 添加平滑过渡 */
+  transition: all 0.2s ease;
+  line-height: 1.4;
+  /* 确保短艺术家名不会有多余空间 */
+  max-height: 1.4em; /* 约1行的高度 */
 }
+
+
 
 .list-item-trailing {
   display: flex;

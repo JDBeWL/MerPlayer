@@ -11,8 +11,8 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-// 音频解码器状态
-#[derive(PartialEq)]
+/// 音频解码器状态
+#[derive(Debug, PartialEq)]
 enum DecoderState {
     Uninitialized,
     Ready,
@@ -20,13 +20,14 @@ enum DecoderState {
     Error(String),
 }
 
-// 计算基于时间的缓冲区大小
-fn calculate_buffer_size(sample_rate: u32, channels: u16, duration_ms: u32) -> usize {
+/// 计算基于时间的缓冲区大小
+#[must_use]
+const fn calculate_buffer_size(sample_rate: u32, channels: u16, duration_ms: u32) -> usize {
     let samples_per_channel = (sample_rate as u64 * duration_ms as u64) / 1000;
     (samples_per_channel * channels as u64) as usize
 }
 
-// 音频缓冲区管理器
+/// 音频缓冲区管理器
 struct AudioBuffer {
     samples: Vec<f32>,
     position: usize,
@@ -48,10 +49,12 @@ impl AudioBuffer {
         }
     }
     
+    #[inline]
     fn is_empty(&self) -> bool {
         self.position >= self.samples.len()
     }
     
+    #[inline]
     fn next(&mut self) -> Option<f32> {
         if self.is_empty() {
             return None;
@@ -71,29 +74,30 @@ impl AudioBuffer {
         self.samples.extend_from_slice(samples);
     }
     
+    #[inline]
     fn remaining(&self) -> usize {
         self.samples.len() - self.position
     }
     
-    // 基于时间的填充需求检测
+    /// 基于时间的填充需求检测
     fn needs_refill(&self) -> bool {
         // 计算剩余样本可播放的毫秒数
         let remaining_ms = (self.remaining() as u64 * 1000) / (self.sample_rate as u64 * self.channels as u64);
         remaining_ms < self.refill_threshold_ms as u64
     }
     
-    // 设置填充阈值
+    /// 设置填充阈值
     fn set_refill_threshold(&mut self, threshold_ms: u32) {
         self.refill_threshold_ms = threshold_ms;
     }
     
-    // 获取当前缓冲区大小
-    fn _len(&self) -> usize {
+    /// 获取当前缓冲区大小
+    fn len(&self) -> usize {
         self.samples.len() - self.position
     }
 }
 
-// Symphonia解码器的简单包装器，直接实现Source
+/// Symphonia解码器的简单包装器，直接实现Source
 pub struct SymphoniaSource {
     decoder: Arc<Mutex<SymphoniaDecoder>>,
 }
@@ -130,7 +134,7 @@ impl Source for SymphoniaSource {
     fn channels(&self) -> u16 {
         // 返回目标声道数，而不是原始声道数
         if let Ok(decoder) = self.decoder.lock() {
-            decoder.target_channels
+            decoder.target_channels()
         } else {
             0
         }
@@ -153,11 +157,10 @@ impl Source for SymphoniaSource {
     }
 }
 
-// Symphonia解码器实现
+/// Symphonia解码器实现
 pub struct SymphoniaDecoder {
     path: String,
     sample_rate: u32,
-    channels: u16,
     total_duration: Option<Duration>,
     state: DecoderState,
     buffer: AudioBuffer,
@@ -167,33 +170,18 @@ pub struct SymphoniaDecoder {
     current_sample: u64,
     // 多声道处理配置
     target_channels: u16,  // 目标声道数（通常是2，用于立体声）
+    source_channels: u16, // 原始声道数，用于计算缓冲区
     channel_map: Option<Vec<usize>>,  // 声道映射表
 }
 
-
 impl SymphoniaDecoder {
-     pub fn new(path: &str) -> Result<Self, String> {
+    /// 创建新的解码器实例
+    pub fn new(path: &str) -> Result<Self, String> {
         Self::new_with_buffer_duration(path, None)
-     }
-     
-     // 创建声道映射表，用于将多声道降混到立体声
-     fn create_channel_mapping(channels: u16) -> Option<Vec<usize>> {
-         match channels {
-             // 5.1声道到立体声的映射：L, R, C, LFE, SL, SR -> L, R
-             6 => Some(vec![0, 1]), // 只使用左右声道，忽略中置、低频增强和环绕声道
-             
-             // 7.1声道到立体声的映射：L, R, C, LFE, SL, SR, BL, BR -> L, R
-             8 => Some(vec![0, 1]), // 只使用左右声道
-             
-             // 其他多声道配置的通用处理
-             n if n > 2 => Some(vec![0, 1]), // 使用前两个声道作为左右声道
-             
-             _ => None, // 单声道或立体声不需要映射
-         }
-     }
-     
-     // 创建带有自定义缓冲区时长的解码器
-     pub fn new_with_buffer_duration(path: &str, buffer_duration_ms: Option<u32>) -> Result<Self, String> {
+    }
+    
+    /// 创建带有自定义缓冲区时长的解码器
+    pub fn new_with_buffer_duration(path: &str, buffer_duration_ms: Option<u32>) -> Result<Self, String> {
         // 获取基本信息
         let file = File::open(path).map_err(|e| e.to_string())?;
         let mss = MediaSourceStream::new(Box::new(file.try_clone().map_err(|e| e.to_string())?), Default::default());
@@ -221,7 +209,7 @@ impl SymphoniaDecoder {
             .ok_or("No audio track found")?;
         
         let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-        let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2) as u16;
+        let source_channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2) as u16;
         
         let total_duration = if let (Some(n_frames), Some(sample_rate)) = (
             track.codec_params.n_frames,
@@ -243,23 +231,16 @@ impl SymphoniaDecoder {
             }
         });
         
-        let buffer_size = calculate_buffer_size(sample_rate, channels, buffer_duration_ms);
-        
         let target_channels = 2u16; // 总是输出立体声
+        let buffer_size = calculate_buffer_size(sample_rate, target_channels, buffer_duration_ms);
         
         // 创建声道映射表
-        let channel_map = if channels <= 2 {
-            // 如果已经是单声道或立体声，不需要映射
-            None
-        } else {
-            // 对于多声道，创建到立体声的映射
-            Self::create_channel_mapping(channels)
-        };
+        let channel_map = Self::create_channel_mapping(source_channels);
         
         Ok(SymphoniaDecoder {
             path: path.to_string(),
             sample_rate,
-            channels,
+            source_channels,
             total_duration,
             state: DecoderState::Uninitialized,
             buffer: AudioBuffer::new(buffer_size, sample_rate, target_channels),
@@ -272,14 +253,30 @@ impl SymphoniaDecoder {
         })
     }
     
-    // 在运行时调整缓冲区参数
+    /// 创建声道映射表，用于将多声道降混到立体声
+    fn create_channel_mapping(channels: u16) -> Option<Vec<usize>> {
+        match channels {
+            // 5.1声道到立体声的映射：L, R, C, LFE, SL, SR -> L, R
+            6 => Some(vec![0, 1]), // 只使用左右声道，忽略中置、低频增强和环绕声道
+            
+            // 7.1声道到立体声的映射：L, R, C, LFE, SL, SR, BL, BR -> L, R
+            8 => Some(vec![0, 1]), // 只使用左右声道
+            
+            // 其他多声道配置的通用处理
+            n if n > 2 => Some(vec![0, 1]), // 使用前两个声道作为左右声道
+            
+            _ => None, // 单声道或立体声不需要映射
+        }
+    }
+    
+    /// 在运行时调整缓冲区参数
     pub fn adjust_buffer_settings(&mut self, buffer_duration_ms: u32, refill_threshold_ms: u32) {
         let new_buffer_size = calculate_buffer_size(self.sample_rate, self.target_channels, buffer_duration_ms);
         self.buffer = AudioBuffer::new(new_buffer_size, self.sample_rate, self.target_channels);
         self.buffer.set_refill_threshold(refill_threshold_ms);
     }
     
-    // 获取当前缓冲区设置
+    /// 获取当前缓冲区设置
     pub fn get_buffer_info(&self) -> (u32, u32, usize) {
         let refill_threshold_ms = self.buffer.refill_threshold_ms;
         let buffer_duration_ms = ((self.buffer.capacity as u64 * 1000) / 
@@ -287,6 +284,17 @@ impl SymphoniaDecoder {
         (buffer_duration_ms, refill_threshold_ms, self.buffer.capacity)
     }
     
+    /// 获取目标声道数
+    pub fn target_channels(&self) -> u16 {
+        self.target_channels
+    }
+    
+    /// 获取源声道数
+    pub fn source_channels(&self) -> u16 {
+        self.source_channels
+    }
+    
+    /// 跳转到指定时间点
     pub fn seek(&mut self, time: Duration) -> Result<(), String> {
         let target_seconds = time.as_secs_f64();
         let target_ts = (target_seconds * self.sample_rate as f64) as u64;
@@ -326,7 +334,7 @@ impl SymphoniaDecoder {
         }
     }
     
-    // 初始化解码器
+    /// 初始化解码器
     fn initialize_decoder(&mut self) -> Result<(), String> {
         // 打开文件
         let file = File::open(&self.path).map_err(|e| e.to_string())?;
@@ -388,7 +396,7 @@ impl SymphoniaDecoder {
         Ok(())
     }
     
-    // 填充缓冲区
+    /// 填充缓冲区
     fn fill_buffer(&mut self) -> Result<(), String> {
         // 如果未初始化，先初始化
         if self.state == DecoderState::Uninitialized {
@@ -469,265 +477,118 @@ impl SymphoniaDecoder {
         Ok(())
     }
     
-    // 将音频缓冲区转换为f32样本，支持多声道降混
+    /// 将音频缓冲区转换为f32样本，支持多声道降混
     fn convert_audio_buffer(audio_buf: AudioBufferRef, samples: &mut Vec<f32>, channel_map: &Option<Vec<usize>>) {
         match audio_buf {
-            AudioBufferRef::F32(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                // 应用声道映射
-                match channel_map {
-                    Some(map) => {
-                        // 多声道降混到立体声
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i].max(-1.0).min(1.0);
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        // 直接输出所有声道（单声道或立体声）
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i].max(-1.0).min(1.0);
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::U16(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32 / 32767.5 - 1.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32 / 32767.5 - 1.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::S16(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32 / 32768.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32 / 32768.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::U24(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let u24_val = buf.chan(ch_idx)[i];
-                                    let sample = u24_val.inner() as f32 / 8388607.5 - 1.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let u24_val = buf.chan(ch)[i];
-                                let sample = u24_val.inner() as f32 / 8388607.5 - 1.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::S24(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let i24_val = buf.chan(ch_idx)[i];
-                                    let sample = i24_val.inner() as f32 / 8388608.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let i24_val = buf.chan(ch)[i];
-                                let sample = i24_val.inner() as f32 / 8388608.0;
-                                samples.push(sample);
-                            }
+            AudioBufferRef::F32(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i].max(-1.0).min(1.0),
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::U16(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i] as f32 / 32767.5 - 1.0,
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::S16(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i] as f32 / 32768.0,
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::U24(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| {
+                    let u24_val = buf.chan(ch)[i];
+                    u24_val.inner() as f32 / 8388607.5 - 1.0
+                },
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::S24(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| {
+                    let i24_val = buf.chan(ch)[i];
+                    i24_val.inner() as f32 / 8388608.0
+                },
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::U32(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i] as f32 / 2147483647.5 - 1.0,
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::S32(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i] as f32 / 2147483648.0,
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::U8(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i] as f32 / 127.5 - 1.0,
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::S8(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| buf.chan(ch)[i] as f32 / 128.0,
+                samples,
+                channel_map
+            ),
+            AudioBufferRef::F64(buf) => Self::process_audio_buffer(
+                buf.frames(),
+                buf.spec().channels.count(),
+                |ch, i| {
+                    let sample = buf.chan(ch)[i] as f32;
+                    sample.max(-1.0).min(1.0)
+                },
+                samples,
+                channel_map
+            ),
+        }
+    }
+    
+    /// 处理音频缓冲区的通用函数，减少重复代码
+    fn process_audio_buffer<F>(
+        frames: usize,
+        channels: usize,
+        sample_fn: F,
+        samples: &mut Vec<f32>,
+        channel_map: &Option<Vec<usize>>
+    )
+    where
+        F: Fn(usize, usize) -> f32,
+    {
+        match channel_map {
+            Some(map) => {
+                // 多声道降混到立体声
+                for i in 0..frames {
+                    for &ch_idx in map.iter() {
+                        if ch_idx < channels {
+                            samples.push(sample_fn(ch_idx, i));
                         }
                     }
                 }
             }
-            AudioBufferRef::U32(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32 / 2147483647.5 - 1.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32 / 2147483647.5 - 1.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::S32(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32 / 2147483648.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32 / 2147483648.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::U8(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32 / 127.5 - 1.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32 / 127.5 - 1.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::S8(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32 / 128.0;
-                                    samples.push(sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32 / 128.0;
-                                samples.push(sample);
-                            }
-                        }
-                    }
-                }
-            }
-            AudioBufferRef::F64(buf) => {
-                let frames = buf.frames();
-                let channels = buf.spec().channels.count();
-                
-                match channel_map {
-                    Some(map) => {
-                        for i in 0..frames {
-                            for &ch_idx in map.iter() {
-                                if ch_idx < channels {
-                                    let sample = buf.chan(ch_idx)[i] as f32;
-                                    let clamped_sample = sample.max(-1.0).min(1.0);
-                                    samples.push(clamped_sample);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for i in 0..frames {
-                            for ch in 0..channels {
-                                let sample = buf.chan(ch)[i] as f32;
-                                let clamped_sample = sample.max(-1.0).min(1.0);
-                                samples.push(clamped_sample);
-                            }
-                        }
+            None => {
+                // 直接输出所有声道（单声道或立体声）
+                for i in 0..frames {
+                    for ch in 0..channels {
+                        samples.push(sample_fn(ch, i));
                     }
                 }
             }
@@ -782,5 +643,6 @@ impl Source for SymphoniaDecoder {
 
 impl Drop for SymphoniaDecoder {
     fn drop(&mut self) {
+        // 清理资源
     }
 }

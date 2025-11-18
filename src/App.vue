@@ -41,7 +41,8 @@
             <!-- 左侧：专辑封面和歌曲信息 -->
             <div class="player-left">
               <div class="album-art-container">
-                <Transition :name="transitionDirection === 'next' ? 'album-art-slide-next' : 'album-art-slide-prev'" mode="out-in">
+                <Transition :name="transitionDirection === 'next' ? 'album-art-slide-next' : 'album-art-slide-prev'"
+                  mode="out-in">
                   <div :key="currentTrack ? currentTrack.path : 'no-track'" class="album-art-wrapper">
                     <div class="album-art" :style="{ backgroundImage: currentTrackCover }">
                       <div v-if="!currentTrack || !currentTrack.cover" class="album-art-placeholder">
@@ -55,8 +56,15 @@
               <Transition name="fade" mode="out-in">
                 <div :key="currentTrack ? currentTrack.path : 'no-track-info'">
                   <div class="track-info" v-if="currentTrack">
-                    <h2 class="track-title">{{ getTrackTitle(currentTrack) || $t('player.noTrack') }}</h2>
-                    <div class="track-artist" v-if="getTrackArtist(currentTrack)">
+                    <h2 
+                      class="track-title" 
+                      :title="getTrackTitle(currentTrack) || $t('player.noTrack')"
+                    >{{ getTrackTitle(currentTrack) || $t('player.noTrack') }}</h2>
+                    <div 
+                      class="track-artist" 
+                      v-if="getTrackArtist(currentTrack)" 
+                      :title="getTrackArtist(currentTrack)"
+                    >
                       {{ getTrackArtist(currentTrack) }}
                     </div>
                     <!-- 文件不存在提示 -->
@@ -70,7 +78,8 @@
                     <div class="track-artist">&nbsp;</div>
                   </div>
 
-                  <div class="audio-info" v-if="currentTrack && formattedAudioInfo && configStore.general.showAudioInfo">
+                  <div class="audio-info"
+                    v-if="currentTrack && formattedAudioInfo && configStore.general.showAudioInfo">
                     <span class="text-caption">{{ formattedAudioInfo }}</span>
                   </div>
                   <div class="audio-info-placeholder" v-else>
@@ -136,7 +145,7 @@
   transform: translateX(100%);
 }
 
-/* Album Art Transitions */
+/* 专辑封面过渡动画 */
 .album-art-slide-next-enter-active,
 .album-art-slide-next-leave-active,
 .album-art-slide-prev-enter-active,
@@ -146,27 +155,29 @@
   height: 100%;
 }
 
-/* Next Track Transition */
+/* 下一首过渡 */
 .album-art-slide-next-enter-from {
   transform: translateX(20%) scale(0.9);
   opacity: 0;
 }
+
 .album-art-slide-next-leave-to {
   transform: translateX(-20%) scale(0.9);
   opacity: 0;
 }
 
-/* Previous Track Transition */
+/* 上一首过渡 */
 .album-art-slide-prev-enter-from {
   transform: translateX(-20%) scale(0.9);
   opacity: 0;
 }
+
 .album-art-slide-prev-leave-to {
   transform: translateX(20%) scale(0.9);
   opacity: 0;
 }
 
-/* Common enter-to and leave-from states */
+/* 过渡结束 */
 .album-art-slide-next-enter-to,
 .album-art-slide-next-leave-from,
 .album-art-slide-prev-enter-to,
@@ -293,7 +304,7 @@ const currentTrackCover = computed(() => {
   if (currentTrack.value && currentTrack.value.cover) {
     return `url('${currentTrack.value.cover}')`
   }
-  return 'none' // No cover or no track, so no background image
+  return 'none' // 如果没有封面，返回none
 })
 
 const formattedAudioInfo = computed(() => {
@@ -398,9 +409,15 @@ const minimizeWindow = async () => {
 const toggleFullscreen = async () => {
   try {
     if (isFullscreen.value) {
+      // 退出全屏
       await appWindow.setFullscreen(false)
       isFullscreen.value = false
     } else {
+      // 进入全屏前先检查并取消最大化状态
+      const isMaximized = await appWindow.isMaximized()
+      if (isMaximized) {
+        await appWindow.unmaximize()
+      }
       await appWindow.setFullscreen(true)
       isFullscreen.value = true
     }
@@ -417,6 +434,8 @@ const closeWindow = async () => {
   }
 }
 
+
+
 // 监听当前音轨变化，自动处理标题信息
 watch(currentTrack, (newTrack) => {
   if (newTrack && newTrack.path) {
@@ -424,17 +443,16 @@ watch(currentTrack, (newTrack) => {
   }
 }, { immediate: true })
 
-const transitionDirection = ref(null) // 'next' or 'prev'
+const transitionDirection = ref(null)
 
-// Watch for track index changes to determine transition direction
+// 监听当前音轨索引变化，自动处理标题信息
 watch(currentTrackIndex, (newIndex, oldIndex) => {
   if (oldIndex === -1 || newIndex === -1) {
-    transitionDirection.value = null; // Initial load or no previous track
+    transitionDirection.value = null;
     return;
   }
 
-  // Determine if it's next or previous based on index change
-  // Handle playlist looping
+  // 如果播放列表为空，则不进行播放列表循环处理
   const playlistLength = playlist.value.length;
   if (playlistLength === 0) {
     transitionDirection.value = null;
@@ -446,19 +464,19 @@ watch(currentTrackIndex, (newIndex, oldIndex) => {
   } else if (newIndex === (oldIndex - 1 + playlistLength) % playlistLength) {
     transitionDirection.value = 'prev';
   } else {
-    transitionDirection.value = null; // Direct jump or shuffle
+    transitionDirection.value = null; // 其他情况不进行处理
   }
 });
 
 onMounted(async () => {
-  // Load configuration on startup
+  // 加载配置文件
   try {
     await configStore.loadConfig()
   } catch (error) {
     console.warn('Failed to load configuration:', error)
   }
 
-  // Apply loaded language from config
+  // 设置语言
   try {
     const { setLocale } = await import('./i18n')
     setLocale(configStore.general.language || 'zh')
@@ -466,13 +484,13 @@ onMounted(async () => {
     console.error('Failed to apply language from config:', error)
   }
 
-  // Apply theme on mount
+  // 应用主题
   themeStore.applyTheme()
 
-  // Initialize audio element
+  // 初始化音频播放器
   playerStore.initAudio()
 
-  // Check if window is in fullscreen mode
+  // 检查当前窗口是否处于全屏状态
   try {
     isFullscreen.value = await appWindow.isFullscreen()
   } catch (error) {
@@ -575,6 +593,21 @@ onUnmounted(() => {
   .player-right {
     width: 100%;
   }
+
+  /* 在小屏幕上调整标题字体大小 */
+  .track-title {
+    font-size: 24px;
+    /* 允许最多3行 */
+    -webkit-line-clamp: 3;
+    max-height: 3.9em;
+  }
+
+  .track-artist {
+    font-size: 16px;
+    /* 允许最多2行 */
+    -webkit-line-clamp: 2;
+    max-height: 2.8em;
+  }
 }
 
 .album-art-container {
@@ -582,7 +615,7 @@ onUnmounted(() => {
   height: min(400px, 45vh);
   margin-bottom: 24px;
   flex-shrink: 0;
-  position: relative; /* Added for positioning inner elements */
+  position: relative;
 }
 
 .album-art-wrapper {
@@ -591,8 +624,8 @@ onUnmounted(() => {
   left: 0;
   width: 100%;
   height: 100%;
-  border-radius: var(--md-sys-shape-corner-medium); /* Apply border-radius here */
-  overflow: hidden; /* Apply overflow hidden here */
+  border-radius: var(--md-sys-shape-corner-medium);
+  overflow: hidden;
 }
 
 .album-art {
@@ -624,6 +657,11 @@ onUnmounted(() => {
   text-align: center;
   margin-bottom: 16px;
   max-width: min(400px, 40vw);
+  /* 添加容器以限制溢出 */
+  overflow: hidden;
+  position: relative;
+  /* 确保可以正确计算高度 */
+  min-height: 76px; /* 32px + 18px + 8px + 18px for artist and title */
 }
 
 .track-title {
@@ -633,6 +671,15 @@ onUnmounted(() => {
   margin: 0 0 8px 0;
   word-break: break-word;
   /* Allow long words to break */
+  /* 添加多行文本限制 */
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; /* 最多显示两行 */
+  -webkit-box-orient: vertical;
+  /* 确保短标题不会有多余空间 */
+  max-height: 2.6em; /* 约2行的高度 */
+  line-height: 1.3;
+  transition: all 0.3s ease;
 }
 
 .track-artist {
@@ -640,6 +687,16 @@ onUnmounted(() => {
   color: var(--md-sys-color-on-surface-variant);
   margin-bottom: 8px;
   font-weight: 400;
+  /* 添加多行文本限制 */
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1; /* 最多显示一行 */
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  /* 确保短艺术家名不会有多余空间 */
+  max-height: 1.4em; /* 约1行的高度 */
+  line-height: 1.4;
+  transition: all 0.3s ease;
 }
 
 .audio-info {
@@ -679,13 +736,12 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
-/* Placeholder styles */
 .track-info-placeholder {
   width: 100%;
   text-align: center;
   margin-bottom: 16px;
   max-width: min(400px, 40vw);
-  visibility: hidden; /* Occupy space but remain invisible */
+  visibility: hidden;
 }
 
 .audio-info-placeholder {
@@ -694,10 +750,9 @@ onUnmounted(() => {
   margin-top: 8px;
   max-width: min(400px, 40vw);
   text-align: center;
-  visibility: hidden; /* Occupy space but remain invisible */
+  visibility: hidden;
 }
 
-/* Fade Transition */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.3s ease;

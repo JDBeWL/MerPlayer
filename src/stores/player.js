@@ -5,33 +5,33 @@ import LyricsParser from '../utils/lyricsParser';
 
 export const usePlayerStore = defineStore('player', {
   state: () => ({
-    // Core player state
+    // 当前播放状态
     currentTrack: null,
     playlist: [],
     isPlaying: false,
     currentTime: 0,
-    duration: 0, // This will be set from metadata, not a live audio element
+    duration: 0,
     volume: 1,
     
-    // Playback settings
+    // 重复模式设置
     repeatMode: 'none', // 'none', 'track', 'list'
     isShuffle: false,
 
-    // Lyrics
+    // 歌词
     lyrics: null,
     currentLyricIndex: -1,
 
-    // Track technical info
+    // 音频信息
     audioInfo: {
       bitrate: null,
       sampleRate: null,
       channels: null
     },
 
-    // Internal state
+    // 加载状态
     _isLoading: false,
-    _statusPollId: null, // To hold the setInterval ID
-    lastTrackIndex: -1, // To track the previous track index for transitions
+    _statusPollId: null, // 状态轮询ID
+    lastTrackIndex: -1, // 上一次播放的歌曲索引
   }),
 
   getters: {
@@ -41,12 +41,12 @@ export const usePlayerStore = defineStore('player', {
     },
     hasNextTrack: (state) => {
       if (!state.currentTrack) return false;
-      // If there's a playlist, there's always a next track because of looping.
+      // 如果当前播放列表不为空，则有下一首歌曲
       return state.playlist.length > 0;
     },
     hasPreviousTrack: (state) => {
       if (!state.currentTrack) return false;
-      // If there's a playlist, there's always a previous track because of looping.
+      // 如果当前播放列表不为空，则有上一首歌曲
       return state.playlist.length > 0;
     },
     currentLyric: (state) => {
@@ -58,17 +58,19 @@ export const usePlayerStore = defineStore('player', {
   },
 
   actions: {
-    // --- Initialization ---
+    // --- 初始化 ---
     initAudio() {
-      // This is a placeholder. The actual audio backend is initialized in Rust.
-      // We could use this to get initial volume or other settings from the backend if needed.
+      // 初始化音频播放器
+      // 获取音频信息
       console.log('Player store initialized.');
     },
 
-    // --- Core Actions ---
+    // --- 核心行为 ---
 
     /**
-     * Plays the currently loaded track, or the first track in the playlist.
+     * 播放当前歌曲或播放列表中的第一首歌曲。
+     * 如果当前没有歌曲，则尝试播放播放列表中的第一首歌曲。
+     * 如果播放列表为空，则停止播放。
      */
     play() {
       if (this.currentTrack) {
@@ -81,8 +83,8 @@ export const usePlayerStore = defineStore('player', {
     },
 
     /**
-     * Loads and plays a track from the beginning using the backend.
-     * @param {object} track - The track object to play.
+     * 从后端加载播放列表
+     * @param {object} track
      */
     async playTrack(track) {
       if (!track || this._isLoading) return;
@@ -192,10 +194,10 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
-    // --- Status Polling ---
+    // --- 进度控制 ---
 
     startStatusPolling() {
-      this.stopStatusPolling(); // Ensure no multiple pollers are running
+      this.stopStatusPolling(); // 停止之前的轮询
       const interval = 250; // ms
       this._statusPollId = setInterval(async () => {
         if (!this.isPlaying) {
@@ -245,7 +247,7 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
-    // --- Event Handlers (Simulated) ---
+    // --- 播放结束 ---
 
     async _onEnded() {
       // 确保后端停止播放
@@ -289,7 +291,7 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
-    // --- Playlist and Navigation ---
+    // --- 文件检查 ---
 
     /**
      * 检查当前播放列表的歌曲文件是否仍然存在
@@ -436,7 +438,7 @@ export const usePlayerStore = defineStore('player', {
       await this.playTrack(this.playlist[prevIndex]);
     },
 
-    // --- Controls ---
+    // --- 播放控制 ---
 
     seek(time) {
       if (!this.currentTrack) return;
@@ -481,12 +483,12 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
-    // --- Data Loading ---
+    // --- 数据加载 ---
 
     loadPlaylist(playlist) {
       this.playlist = playlist;
       if (playlist && playlist.length > 0) {
-        // Load the first track but don't play it automatically
+        // 设置当前播放的第一个但是不自动播放
         const firstTrack = playlist[0];
         this.currentTrack = firstTrack;
         this.duration = firstTrack.duration || 0;
@@ -496,7 +498,7 @@ export const usePlayerStore = defineStore('player', {
           channels: firstTrack.channels || 'N/A',
         };
       } else {
-        // Clear player state if playlist is empty
+        // 播放列表为空时，重置播放器状态
         this.currentTrack = null;
         this.isPlaying = false;
         this.currentTime = 0;
@@ -521,10 +523,10 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
-    // This action is called when the app is closing
+    // --- 清理 ---
     cleanup() {
         this.stopStatusPolling();
-        // Optionally, tell the backend to stop playing
+        // 停止后端播放
         invoke('pause_track');
     }
   }
