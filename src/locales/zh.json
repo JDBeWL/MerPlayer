@@ -94,7 +94,10 @@
     "alignLeft": "左对齐",
     "alignCenter": "居中",
     "alignRight": "右对齐",
-    "lyricsFontFamily": "歌词字体"
+    "lyricsFontFamily": "歌词字体",
+    "lyricsStyle": "歌词样式",
+    "lyricsStyleModern": "现代",
+    "lyricsStyleClassic": "经典"
   },
   "themeSelector": {
     "chooseThemeColor": "选择主题颜色",

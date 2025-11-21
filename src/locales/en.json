@@ -94,7 +94,10 @@
     "alignLeft": "Left",
     "alignCenter": "Center",
     "alignRight": "Right",
-    "lyricsFontFamily": "Lyrics Font"
+    "lyricsFontFamily": "Lyrics Font",
+    "lyricsStyle": "Lyrics Style",
+    "lyricsStyleModern": "Modern",
+    "lyricsStyleClassic": "Classic"
   },
   "themeSelector": {
     "chooseThemeColor": "Choose Theme Color",

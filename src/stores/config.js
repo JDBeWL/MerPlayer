@@ -14,7 +14,6 @@ function debounce(func, wait) {
 
 /**
  * 配置系统存储（包含UI设置）
- * 整合了原ui.js的设置面板功能
  */
 export const useConfigStore = defineStore('config', {
   state: () => ({
@@ -54,7 +53,8 @@ export const useConfigStore = defineStore('config', {
       autoSaveConfig: true,               // 自动保存配置
       showAudioInfo: true,              // 是否显示音频信息
       lyricsAlignment: 'center',        // 歌词对齐方式
-      lyricsFontFamily: 'Roboto',       // 歌词字体(MD3)
+      lyricsFontFamily: 'Roboto',       // 歌词字体
+      lyricsStyle: 'modern',           // 歌词样式
     },
     
     // UI设置（原ui.js的功能）

@@ -1,0 +1,42 @@
+.lyrics-style-classic .lyrics {
+    margin: 6px 0;
+    padding: 12px 20px 12px 12px;
+    font-size: 24px;
+    transition: all 0.2s ease;
+    word-break: break-word;
+    min-height: 1em;
+    cursor: pointer;
+    border-radius: 8px;
+    transform-origin: var(--align-origin, left center);
+}
+
+.lyrics-style-classic .lyrics:hover {
+    background-color: var(--md-sys-color-surface-variant);
+}
+
+.lyrics-style-classic .lyrics.active {
+    font-size: 32px;
+    font-weight: bold;
+    color: var(--md-sys-color-primary);
+}
+
+.lyrics-style-classic .lyrics .english { font-size: 1em; }
+.lyrics-style-classic .lyrics .chinese { font-size: 1em; }
+
+.lyrics-style-classic .lyrics-display {
+    mask-image: none;
+    -webkit-mask-image: none;
+}
+
+.lyrics-style-classic .karaoke-text {
+    --inactive-color: color-mix(in srgb, var(--md-sys-color-primary) 40%, rgba(255, 255, 255, 0.1));
+    --active-color: var(--md-sys-color-primary);
+
+    background-image: linear-gradient(to right,
+            var(--active-color) var(--progress),
+            var(--inactive-color) var(--progress));
+
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+}

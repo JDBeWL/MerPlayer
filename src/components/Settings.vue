@@ -93,6 +93,13 @@
                   <option v-for="font in systemFonts" :key="font" :value="font">{{ font }}</option>
                 </select>
               </div>
+              <div class="select-field">
+                <label for="lyricsStyle">{{ $t('config.lyricsStyle') }}:</label>
+                <select id="lyricsStyle" v-model="configStore.general.lyricsStyle" @change="saveConfig">
+                  <option value="modern">{{ $t('config.lyricsStyleModern') }}</option>
+                  <option value="classic">{{ $t('config.lyricsStyleClassic') }}</option>
+                </select>
+              </div>
             </div>
           </div>
           

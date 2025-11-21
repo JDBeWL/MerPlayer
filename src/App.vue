@@ -221,7 +221,7 @@ const isMaximized = ref(false)
 // 存储处理后的音轨信息
 const processedTracks = ref({})
 
-// 智能获取音轨标题 - 优化显示流程
+// 获取音轨标题
 const getTrackTitle = (track) => {
   if (!track || !track.path) {
     return ''
@@ -240,11 +240,10 @@ const getTrackTitle = (track) => {
   }
 
   // 如果还没处理完，暂时返回track中已有的name或文件名
-  // 这样可以避免闪烁，因为track中的name可能已经是处理过的
   return track.name || FileUtils.getFileName(trackPath)
 }
 
-// 智能获取音轨艺术家 - 优化显示流程
+// 获取音轨艺术家
 const getTrackArtist = (track) => {
   if (!track || !track.path) {
     return ''
@@ -340,9 +339,6 @@ const formattedAudioInfo = computed(() => {
 // 检查当前歌曲文件是否存在
 const isTrackFileExists = computed(() => {
   if (!currentTrack.value) return true;
-
-  // 由于文件存在性检查需要异步操作，这里先简单检查path是否存在
-  // 实际的文件存在性检查在播放器状态管理中进行
   return !!currentTrack.value.path;
 });
 

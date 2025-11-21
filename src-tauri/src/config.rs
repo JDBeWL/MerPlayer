@@ -66,7 +66,7 @@ pub struct GeneralConfig {
 }
 
 fn default_lyrics_font_family() -> String {
-    "Roboto".to_string()  // MD3推荐字体
+    "Roboto".to_string()
 }
 
 impl Default for AppConfig {

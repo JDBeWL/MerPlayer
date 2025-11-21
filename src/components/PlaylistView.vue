@@ -252,7 +252,7 @@ const removeTrack = (index) => {
 
 .list-item-content {
   flex: 1;
-  min-width: 0; /* 允许内容收缩 */
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -260,11 +260,9 @@ const removeTrack = (index) => {
   font-size: 16px;
   font-weight: 400;
   color: var(--md-sys-color-on-surface);
-  /* 处理长文本 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* 添加平滑过渡 */
   transition: all 0.2s ease;
 }
 
@@ -275,18 +273,15 @@ const removeTrack = (index) => {
 .list-item-supporting {
   font-size: 14px;
   color: var(--md-sys-color-on-surface-variant);
-  /* 处理长文本 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* 添加平滑过渡 */
   transition: all 0.2s ease;
 }
 
 .list-item.selected .list-item-supporting {
   color: var(--theme-on-primary-container);
 }
-
 
 
 .list-item-trailing {
@@ -303,7 +298,6 @@ const removeTrack = (index) => {
   color: inherit;
 }
 
-/* 响应式设计 - 调整播放列表项在小屏幕上的字体 */
 @media (max-width: 480px) {
   .list-item-headline {
     font-size: 14px;
@@ -349,7 +343,6 @@ const removeTrack = (index) => {
   }
 }
 
-/* 确保选中状态下的图标颜色一致 */
 .list-item.selected .material-sounds-playing-icon,
 .list-item.selected .playing-icon {
   color: var(--theme-on-primary-container);
