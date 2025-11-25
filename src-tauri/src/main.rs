@@ -1,28 +1,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio_decoder;
+mod audio_device;
 mod config;
-mod playback;
+mod config_commands;
+mod error;
 mod filesystem;
 mod metadata;
-mod config_commands;
+mod playback;
 mod system;
-mod error;
-mod audio_device;
 
 // 重新导出所有命令
-pub use playback::*;
+pub use audio_device::*;
+pub use config_commands::*;
 pub use filesystem::*;
 pub use metadata::*;
-pub use config_commands::*;
+pub use playback::*;
 pub use system::*;
-pub use audio_device::*;
 
-use std::sync::{Arc, Mutex};
-use rodio::{OutputStream, Sink};
-use crate::config::ConfigManager;
 use crate::audio_decoder::SymphoniaSource;
+use crate::config::ConfigManager;
 use cpal::traits::{DeviceTrait, HostTrait};
+use rodio::{OutputStream, Sink};
+use std::sync::{Arc, Mutex};
 
 pub struct PlayerState {
     pub sink: Arc<Mutex<Sink>>,
@@ -41,12 +41,17 @@ pub struct AppState {
 fn main() {
     // 初始化cpal host
     let host = cpal::default_host();
-    let device = host.default_output_device().expect("No default output device available");
-    let device_name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
+    let device = host
+        .default_output_device()
+        .expect("No default output device available");
+    let device_name = device
+        .name()
+        .unwrap_or_else(|_| "Unknown Device".to_string());
 
     // 从选定的设备创建音频输出流
-    let (_stream, stream_handle) = OutputStream::try_from_device(&device).expect("Failed to create output stream from device");
-    
+    let (_stream, stream_handle) =
+        OutputStream::try_from_device(&device).expect("Failed to create output stream from device");
+
     // 我们需要保持流的存活，但它不是Send或Sync。
     // 泄露它是一种简单的方法，让它在应用程序的生命周期内保持存活。
     Box::leak(Box::new(_stream));
@@ -55,11 +60,22 @@ fn main() {
 
     // 创建配置管理器
     let config_manager = ConfigManager::new();
-    
+
     // 初始化配置文件
     if let Err(e) = config_manager.initialize_config_files() {
         eprintln!("Failed to initialize config files: {}", e);
     }
+
+    // 从配置加载独占模式设置
+    let exclusive_mode_enabled = config_manager
+        .load_config()
+        .map(|c| c.audio.exclusive_mode)
+        .unwrap_or(false);
+
+    println!(
+        "Loaded exclusive mode from config: {}",
+        exclusive_mode_enabled
+    );
 
     // 创建应用程序状态
     let app_state = AppState {
@@ -69,7 +85,7 @@ fn main() {
             current_path: Arc::new(Mutex::new(None)),
             target_volume: Arc::new(Mutex::new(1.0)),
             current_device_name: Arc::new(Mutex::new(device_name)),
-            exclusive_mode: Arc::new(Mutex::new(false)),
+            exclusive_mode: Arc::new(Mutex::new(exclusive_mode_enabled)),
         },
         config_manager,
     };
@@ -95,10 +111,8 @@ fn main() {
             read_lyrics_file,
             get_all_audio_files,
             check_file_exists,
-            
             // 元数据命令
             get_track_metadata,
-            
             // 播放命令
             play_track,
             pause_track,
@@ -107,7 +121,6 @@ fn main() {
             get_playback_status,
             seek_track,
             is_track_finished,
-
             // 配置命令
             initialize_config_files,
             load_config,
@@ -115,17 +128,14 @@ fn main() {
             export_config,
             import_config,
             reset_config,
-            
             // 音乐目录命令
             add_music_directory,
             remove_music_directory,
             set_music_directories,
             get_music_directories,
-            
             // 系统命令
             get_system_info,
             get_system_fonts,
-            
             // 音频设备命令
             get_audio_devices,
             set_audio_device,

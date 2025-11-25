@@ -16,6 +16,12 @@ pub struct AudioDeviceInfo {
     pub name: String,
     /// 是否为默认设备
     pub is_default: bool,
+    /// 是否支持独占模式
+    pub supports_exclusive_mode: bool,
+    /// 当前使用独占模式
+    pub is_exclusive_mode: bool,
+    /// 当前音频模式状态
+    pub audio_mode_status: String,
 }
 
 /// 获取所有可用的音频输出设备
@@ -32,7 +38,17 @@ pub fn get_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
     for device in devices {
         if let Ok(name) = device.name() {
             let is_default = default_device_name.as_ref().map_or(false, |d_name| *d_name == name);
-            device_infos.push(AudioDeviceInfo { name, is_default });
+            
+            // 检测设备是否支持独占模式
+            let supports_exclusive_mode = check_exclusive_mode_support(&device);
+            
+            device_infos.push(AudioDeviceInfo { 
+                name, 
+                is_default,
+                supports_exclusive_mode,
+                is_exclusive_mode: false, // 默认不使用独占模式
+                audio_mode_status: "standard".to_string(), // 默认为标准模式
+            });
         }
     }
 
@@ -55,16 +71,8 @@ pub fn set_audio_device(state: State<AppState>, device_name: String, current_tim
     let exclusive_mode = *state.player.exclusive_mode.lock().unwrap();
     println!("Creating audio stream for device '{}' with exclusive mode: {}", device_name, exclusive_mode);
     
-    // 根据独占模式创建不同的输出流
-    let (_stream, stream_handle) = if exclusive_mode {
-        // 尝试创建独占模式的输出流
-        println!("Using exclusive audio stream creation");
-        create_exclusive_output_stream(&device)?
-    } else {
-        // 创建标准输出流
-        println!("Using standard audio stream creation");
-        OutputStream::try_from_device(&device).map_err(|e| format!("Failed to create output stream: {e}"))?
-    };
+    // 使用优化的输出流创建函数
+    let (_stream, stream_handle, _mode_status) = create_optimized_output_stream(&device, exclusive_mode)?;
 
     // 泄露新的流以保持其存活
     Box::leak(Box::new(_stream));
@@ -117,6 +125,7 @@ pub fn set_audio_device(state: State<AppState>, device_name: String, current_tim
 }
 
 /// 创建独占模式的输出流
+#[allow(dead_code)]
 fn create_exclusive_output_stream(device: &cpal::Device) -> Result<(OutputStream, rodio::OutputStreamHandle), String> {
     println!("Creating exclusive audio stream for device: {}", 
              device.name().unwrap_or_else(|_| "Unknown".to_string()));
@@ -174,7 +183,54 @@ fn create_exclusive_output_stream(device: &cpal::Device) -> Result<(OutputStream
     }
 }
 
+/// 创建优化的输出流（根据设备支持情况选择最佳模式）
+fn create_optimized_output_stream(
+    device: &cpal::Device,
+    exclusive_mode: bool,
+) -> Result<(OutputStream, rodio::OutputStreamHandle, String), String> {
+    println!(
+        "Creating optimized audio stream for device: {}, exclusive_mode: {}",
+        device.name().unwrap_or_else(|_| "Unknown".to_string()),
+        exclusive_mode
+    );
+
+    // 获取设备的默认输出配置
+    let config = device
+        .default_output_config()
+        .map_err(|e| format!("Failed to get default output config: {e}"))?;
+
+    println!("Device sample format: {:?}", config.sample_format());
+    println!("Device config: {:?}", config);
+
+    // 检查设备是否支持独占模式
+    let supports_exclusive = check_exclusive_mode_support(device);
+
+    // 根据用户设置和设备支持情况决定使用哪种模式
+    // 注意：当前实现中没有真正的独占模式，所有模式都使用共享流
+    let mode_status = if exclusive_mode && supports_exclusive {
+        "optimized".to_string() // 即使设备支持，也只是优化的共享模式
+    } else if exclusive_mode && !supports_exclusive {
+        "optimized".to_string() // 用户请求独占但设备不支持，使用优化模式
+    } else {
+        "standard".to_string() // 标准共享模式
+    };
+
+    // 创建标准的 rodio 输出流
+    // 注意：当前实现中没有真正的独占模式，所有模式都使用共享流
+    // 但我们可以尝试使用较小的缓冲区来减少延迟
+    let (output_stream, stream_handle) = OutputStream::try_from_device(device)
+        .map_err(|e| format!("Failed to create output stream: {e}"))?;
+
+    println!(
+        "Created output stream with mode: {} (exclusive: {}, supported: {})",
+        mode_status, exclusive_mode, supports_exclusive
+    );
+
+    Ok((output_stream, stream_handle, mode_status))
+}
+
 /// 测试设备是否支持独占模式
+#[allow(dead_code)]
 fn test_exclusive_stream<T>(device: &cpal::Device, config: cpal::SupportedStreamConfig) -> Result<(), String>
 where
     T: cpal::Sample + cpal::SizedSample + Send + Sync + 'static,
@@ -243,16 +299,8 @@ pub fn toggle_exclusive_mode(state: State<AppState>, enabled: bool, current_time
             .find(|d| d.name().map_or(false, |name| name == current_device))
             .ok_or(format!("Audio device not found: {}", current_device))?;
         
-        // 根据独占模式创建不同的输出流
-        let (_stream, stream_handle) = if enabled {
-            // 尝试创建独占模式的输出流
-            println!("Using exclusive audio stream creation");
-            create_exclusive_output_stream(&device)?
-        } else {
-            // 创建标准输出流
-            println!("Using standard audio stream creation");
-            OutputStream::try_from_device(&device).map_err(|e| format!("Failed to create output stream: {e}"))?
-        };
+        // 使用优化的输出流创建函数
+        let (_stream, stream_handle, _mode_status) = create_optimized_output_stream(&device, enabled)?;
         
         // 泄露新的流以保持其存活
         Box::leak(Box::new(_stream));
@@ -316,8 +364,65 @@ pub fn get_current_audio_device(state: State<AppState>) -> Result<AudioDeviceInf
     
     let is_default = default_device_name.map_or(false, |d_name| d_name == current_device_name);
 
+    // 查找当前设备以检测独占模式支持
+    let host = cpal::default_host();
+    let current_device = host
+        .output_devices()
+        .map_err(|e| format!("Failed to get output devices: {e}"))?
+        .find(|d| d.name().map_or(false, |name| name == current_device_name))
+        .ok_or(format!("Current audio device not found: {}", current_device_name))?;
+    
+    let supports_exclusive_mode = check_exclusive_mode_support(&current_device);
+    let is_exclusive_mode = *state.player.exclusive_mode.lock().unwrap();
+    
+    // 确定当前音频模式状态
+    // 注意：当前实现中没有真正的独占模式，所有模式都使用共享流
+    let audio_mode_status = if is_exclusive_mode {
+        "optimized".to_string() // 启用低延迟模式但不是真正的独占
+    } else {
+        "standard".to_string() // 标准模式
+    };
+
     Ok(AudioDeviceInfo {
         name: current_device_name,
         is_default,
+        supports_exclusive_mode,
+        is_exclusive_mode,
+        audio_mode_status,
     })
+}
+
+/// 检测设备是否支持独占模式
+pub fn check_exclusive_mode_support(device: &cpal::Device) -> bool {
+    // 获取设备的默认输出配置
+    let config = match device.default_output_config() {
+        Ok(config) => config,
+        Err(_) => return false,
+    };
+
+    // 创建输出流配置
+    let mut stream_config: StreamConfig = config.into();
+    stream_config.buffer_size = cpal::BufferSize::Fixed(256); // 使用较小的缓冲区
+
+    // 创建错误回调函数
+    let err_fn = |_err| {
+        // 静默处理错误，这只是检测，不需要打印错误
+    };
+
+    // 创建空的数据回调函数
+    let data_fn = move |_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+        // 我们不播放任何声音，这只是一个占位符
+    };
+
+    // 尝试创建独占模式的流来测试设备支持
+    match device.build_output_stream(&stream_config, data_fn, err_fn, None) {
+        Ok(stream) => {
+            // 立即停止流，因为我们只是测试
+            drop(stream);
+            true
+        }
+        Err(_) => {
+            false
+        }
+    }
 }

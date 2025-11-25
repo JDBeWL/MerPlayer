@@ -57,8 +57,7 @@ export default {
         const containerRef = ref(null);
         const activeIndex = ref(-1);
 
-        // --- 视觉时间系统 (60FPS 动画核心) ---
-        // 相比 store.currentTime 更新频率更高，解决卡拉OK过渡卡顿问题
+        // --- 视觉时间系统 ---
         const visualTime = ref(0);
         const isUserScroll = ref(false); // 标记用户是否正在交互
         let rafId = null;

@@ -18,9 +18,14 @@
       >
         <div class="device-info">
           <span class="device-name">{{ device.name }}</span>
-          <span v-if="device.isDefault" class="device-badge default">
-            {{ $t('config.defaultDevice') }}
-          </span>
+          <div class="device-badges">
+            <span v-if="device.isDefault" class="device-badge default">
+              {{ $t('config.defaultDevice') }}
+            </span>
+            <span v-if="device.supportsExclusiveMode" class="device-badge exclusive">
+              {{ $t('config.exclusiveModeSupported') }}
+            </span>
+          </div>
         </div>
         <div class="device-icon">
           <span v-if="currentDevice?.name === device.name" class="material-symbols-rounded">
@@ -40,13 +45,31 @@
           <div class="option-text">
             <h4>{{ $t('config.exclusiveMode') }}</h4>
             <p>{{ $t('config.exclusiveModeDesc') }}</p>
+            <div v-if="currentDevice" class="device-status">
+              <span class="status-label">{{ $t('config.currentAudioMode') }}:</span>
+              <span class="status-value" :class="`status-${currentDevice.audioModeStatus}`">
+                {{ $t(`config.exclusiveModeStatus.${currentDevice.audioModeStatus}`) }}
+              </span>
+            </div>
           </div>
         </div>
         <div class="option-control">
-          <div class="switch" :class="{ 'active': useExclusiveMode }">
+          <div class="switch" :class="{ 'active': useExclusiveMode, 'disabled': currentDevice && !currentDevice.supportsExclusiveMode }">
             <div class="switch-handle"></div>
           </div>
         </div>
+      </div>
+      
+      <!-- 设备能力提示 -->
+      <div v-if="currentDevice && !currentDevice.supportsExclusiveMode && useExclusiveMode" class="capability-notice">
+        <span class="material-symbols-rounded">info</span>
+        <p>{{ $t('config.exclusiveModeNotSupported') }}</p>
+      </div>
+      
+      <!-- 低延迟模式说明 -->
+      <div v-if="useExclusiveMode" class="capability-notice">
+        <span class="material-symbols-rounded">info</span>
+        <p>{{ $t('config.exclusiveModeWarning') }}</p>
       </div>
     </div>
     
@@ -136,12 +159,26 @@ const selectDevice = async (device) => {
 
 // 切换独占模式
 const toggleExclusiveMode = async () => {
+  // 检查当前设备是否支持独占模式
+  if (currentDevice.value && !currentDevice.value.supportsExclusiveMode && !useExclusiveMode.value) {
+    // 尝试启用但不支持的设备，显示警告但仍然执行
+    console.warn('Trying to enable exclusive mode on unsupported device');
+  }
+  
   try {
     await invoke('toggle_exclusive_mode', { 
       enabled: !useExclusiveMode.value,
       currentTime: playerStore.currentTime,
     });
     useExclusiveMode.value = !useExclusiveMode.value;
+    
+    // 重新获取当前设备信息以更新状态
+    try {
+      const updatedDevice = await invoke('get_current_audio_device');
+      currentDevice.value = updatedDevice;
+    } catch (deviceErr) {
+      console.error('Failed to update current device info:', deviceErr);
+    }
   } catch (err) {
     console.error('Failed to toggle exclusive mode:', err);
     error.value = err.message || 'Failed to toggle exclusive mode';
@@ -164,13 +201,20 @@ onMounted(async () => {
   }
   
   // 获取音频设备时不重新加载配置，避免重置主题
-  fetchAudioDevices();
+  await fetchAudioDevices();
+  
+  // 获取当前设备信息
+  try {
+    currentDevice.value = await invoke('get_current_audio_device');
+  } catch (err) {
+    console.error('Failed to get current audio device:', err);
+  }
 });
 
 // 监听当前设备变化
 watch(currentDevice, (newDevice) => {
   if (newDevice) {
-    console.log('Audio device changed to:', newDevice.name);
+    console.log('Audio device changed to:', newDevice.name, 'Mode:', newDevice.audioModeStatus);
   }
 });
 
@@ -257,12 +301,28 @@ watch(useExclusiveMode, (newValue) => {
   margin-right: 8px;
 }
 
+.device-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
 .device-badge.default {
   background-color: var(--md-sys-color-tertiary-container);
   color: var(--md-sys-color-on-tertiary-container);
 }
 
+.device-badge.exclusive {
+  background-color: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
 .device-item.active .device-badge.default {
+  background-color: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.device-item.active .device-badge.exclusive {
   background-color: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
 }
@@ -330,6 +390,11 @@ watch(useExclusiveMode, (newValue) => {
   background-color: var(--md-sys-color-primary);
 }
 
+.option-control .switch.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .option-control .switch-handle {
   width: 16px;
   height: 16px;
@@ -344,6 +409,55 @@ watch(useExclusiveMode, (newValue) => {
 .option-control .switch.active .switch-handle {
   transform: translateX(16px);
   background-color: var(--md-sys-color-on-primary);
+}
+
+.device-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 0.875rem;
+}
+
+.status-label {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.status-value {
+  font-weight: 500;
+}
+
+.status-value.status-exclusive {
+  color: var(--md-sys-color-primary);
+}
+
+.status-value.status-optimized {
+  color: var(--md-sys-color-tertiary);
+}
+
+.status-value.status-standard {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.capability-notice,
+.exclusive-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--md-sys-shape-corner-small);
+  margin-top: 8px;
+  font-size: 0.875rem;
+}
+
+.capability-notice {
+  background-color: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+.exclusive-warning {
+  background-color: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
 }
 
 .loading-state,

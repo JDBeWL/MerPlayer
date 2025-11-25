@@ -549,7 +549,7 @@ onUnmounted(() => {
 .player-upper {
   flex: 1;
   display: flex;
-  gap: 5vw;
+  gap: max(10px, min((41vw - 600px), 2vw));
   margin-bottom: 16px;
   min-height: 0;
 }
@@ -563,9 +563,9 @@ onUnmounted(() => {
 
 /* 左侧：专辑封面和歌曲信息 */
 .player-left {
-  flex: 0 0 min(200px, 40vw);
+  flex: 0 0 min(600px, 30vw);
   margin-left: 2vw;
-  max-width: 400px;
+  max-width: 600px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -616,8 +616,8 @@ onUnmounted(() => {
 }
 
 .album-art-container {
-  width: min(400px, 45vh);
-  height: min(400px, 45vh);
+  width: min(600px, 45vh);
+  height: min(600px, 45vh);
   margin-bottom: 24px;
   flex-shrink: 0;
   position: relative;
