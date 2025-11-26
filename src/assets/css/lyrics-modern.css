@@ -15,14 +15,13 @@
     color: var(--md-sys-color-on-surface-variant, #888);
     opacity: 0.45;
     transform: scale(0.94);
-    
-    /* 使用 JS 传进来的变量控制原点，解决“位置不对”的问题 */
+
     transform-origin: var(--align-origin, left center);
 
     filter: blur(0.8px);
     will-change: transform, opacity, filter;
 
-    transition: 
+    transition:
         opacity 0.18s cubic-bezier(0.33, 1, 0.68, 1),
         transform 0.18s cubic-bezier(0.33, 1, 0.68, 1),
         filter 0.18s linear;
@@ -38,9 +37,10 @@
     color: var(--md-sys-color-primary, #fff);
     opacity: 1;
     filter: blur(0px);
-    transform: scale(1.2); /* 放大 */
+    transform: scale(1.1);
+    font-size: 42px;
+    /* 放大 */
     text-shadow: 0 0 15px rgba(255, 255, 255, 0.15);
-    /* max-width: calc(100% / 1.2); */
 }
 
 .lyrics-style-modern .first-line {
