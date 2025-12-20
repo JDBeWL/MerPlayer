@@ -2,12 +2,17 @@
     margin: 6px 0;
     padding: 12px 20px 12px 12px;
     font-size: 24px;
-    transition: all 0.25s ease-in-out;
+    transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+        color 0.3s ease,
+        background-color 0.3s ease,
+        margin 0.3s ease-in-out,
+        font-size 0.15s ease-in-out;
     word-break: break-word;
     min-height: 1em;
     cursor: pointer;
     border-radius: 8px;
     transform-origin: var(--align-origin, left center);
+    will-change: transform, font-size;
 }
 
 .lyrics-style-classic .lyrics:hover {
@@ -17,8 +22,8 @@
 .lyrics-style-classic .lyrics.active {
     font-size: 32px;
     font-weight: bold;
-    transform: scale3d(1.05);
-    /* 尝试把硬件加速打开（ */
+    /* 启用GPU加速 */
+    transform: scale(1.01);
     color: var(--md-sys-color-primary);
 }
 

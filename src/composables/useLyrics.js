@@ -77,12 +77,14 @@ export function useLyrics() {
         const result = [];
         groupedMap.forEach(group => {
             const parseKaraoke = (text) => {
-                const karaokeTag = /{\\k[f]?(\d+)}([^{}]+)/g;
+                // 修复正则：允许空文本（[^{}]*）以捕获纯时间占位符；统一 k/kf 处理
+                const karaokeTag = /{\\k[f]?(\d+)}([^{}]*)/g;
                 let words = [];
                 let accTime = group.startTime;
                 let match;
                 while ((match = karaokeTag.exec(text)) !== null) {
-                    const duration = match[0].includes('\\kf') ? parseInt(match[1]) * 0.01 : parseInt(match[1]) * 0.1;
+                    // \k 和 \kf 均为 1cs (0.01s) 单位
+                    const duration = parseInt(match[1]) * 0.01;
                     words.push({ text: match[2], start: accTime, end: accTime + duration });
                     accTime += duration;
                 }
@@ -125,7 +127,8 @@ export function useLyrics() {
 
     // 播放进度监听 (使用二分查找优化性能)
     watchEffect(() => {
-        const currentTime = playerStore.currentTime + 0.2; // 0.2s 提前量，优化观感
+        // 减少提前量，使歌词同步更准确，特别是对于逐字歌词
+        const currentTime = playerStore.currentTime + 0.05; // 减小到50ms提前量
 
         let l = 0, r = lyrics.value.length - 1, idx = -1;
         while (l <= r) {

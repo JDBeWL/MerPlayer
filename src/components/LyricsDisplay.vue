@@ -1,6 +1,6 @@
 <template>
     <div class="lyrics-wrapper" :class="`lyrics-style-${configStore.general.lyricsStyle}`">
-        <div class="lyrics-display" ref="containerRef">
+        <div class="lyrics-display" ref="containerRef" @scroll="handleScroll" @mouseenter="isHovering = true" @mouseleave="isHovering = false">
             <div v-if="loading" class="loading">{{ $t('lyrics.loading') }}</div>
             <div v-else-if="!lyrics.length" class="no-lyrics">{{ $t('lyrics.notFound') }}</div>
 
@@ -18,12 +18,8 @@
                         fontFamily: configStore.general.lyricsFontFamily
                     }" @click="handleLyricClick(line.time, index)">
                     <template v-if="line.karaoke && isActive(index)">
-                        <div class="first-line karaoke-line">
-                            <span v-for="(word, idx) in line.words" :key="idx" class="karaoke-text"
-                                :class="{ 'active': isWordActive(word) }" :style="getKaraokeStyle(word)">
-                                {{ word.text }}
-                            </span>
-                        </div>
+                        <div class="first-line karaoke-line"><span v-for="(word, idx) in line.words" :key="idx" class="karaoke-text"
+                                :class="{ 'active': isWordActive(word) }" :style="getKaraokeStyle(word)">{{ word.text }}</span></div>
                         <div class="last-line translation" v-if="line.texts[1]">{{ line.texts[1] }}</div>
                     </template>
 
@@ -68,18 +64,26 @@ export default {
                 const deltaTime = (timestamp - lastFrameTime) / 1000;
                 lastFrameTime = timestamp;
 
+                const realTime = playerStore.currentTime;
+                
                 if (playerStore.isPlaying) {
-                    // 播放中：基于帧间隔累加时间，实现平滑过渡
-                    visualTime.value += deltaTime;
-                } else {
-                    // 暂停中：强制同步，防止漂移
-                    visualTime.value = playerStore.currentTime;
-                }
+                    // 播放中：基于帧间隔累加时间，并动态调整速度以消除漂移
+                    let speed = 1.0;
+                    const diff = visualTime.value - realTime; // 正值表示视觉领先，负值表示落后
 
-                // 漂移校正：如果视觉时间与真实时间误差过大，进行硬同步
-                const diff = Math.abs(visualTime.value - playerStore.currentTime);
-                if (diff > 0.75) {
-                    visualTime.value = playerStore.currentTime;
+                    if (Math.abs(diff) > 0.5) {
+                        // 误差超过 0.5s，视为 Seek 或严重卡顿，直接硬同步
+                        visualTime.value = realTime;
+                    } else {
+                        // P控制器：速度修正因子。diff 为正(快了)则减速，diff 为负(慢了)则加速
+                        speed = 1.0 - diff; 
+                        // 限制速度调整范围 [0.5, 1.5] 防止过度加速/减速
+                        speed = Math.max(0.5, Math.min(1.5, speed));
+                        visualTime.value += deltaTime * speed;
+                    }
+                } else {
+                    // 暂停中：直接同步
+                    visualTime.value = realTime;
                 }
 
                 rafId = requestAnimationFrame(animate);
@@ -89,7 +93,9 @@ export default {
 
         // 监听真实时间跳变（如拖拽进度条），立即同步
         watch(() => playerStore.currentTime, (newTime) => {
-            if (Math.abs(visualTime.value - newTime) > 0.1) {
+            // 只有当偏差非常大（说明发生了Seek）时才立即硬同步
+            // 小偏差交给 RAF 里的平滑算法处理，避免进度条抖动
+            if (Math.abs(visualTime.value - newTime) > 0.5) {
                 visualTime.value = newTime;
             }
         });
@@ -99,7 +105,8 @@ export default {
 
         const isWordActive = (word) => {
             const t = visualTime.value;
-            return t >= word.start; // 只要开始了就算激活
+            // 只有在时间范围内才算激活，并且考虑下一个单词的开始时间
+            return t >= word.start && t < word.end;
         };
 
         // 计算卡拉OK单词的填充进度 (0% - 100%)
@@ -108,51 +115,82 @@ export default {
             if (t >= word.end) return { '--progress': '100%' };
             if (t < word.start) return { '--progress': '0%' };
 
-            const progress = ((t - word.start) / (word.end - word.start)) * 100;
+            // 确保进度计算精确，避免浮点数误差
+            const duration = word.end - word.start;
+            const elapsed = t - word.start;
+            const progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
             return { '--progress': `${progress.toFixed(2)}%` };
         };
 
         // --- 滚动控制 ---
-        const scrollToActiveLyric = (immediate = false, isUserClick = false) => {
-            if (!containerRef.value || activeIndex.value === -1) return;
+        const isAutoScrolling = ref(false); // 标记是否正在自动滚动
+        const isHovering = ref(false);      // 标记鼠标是否悬停
+        let scrollTimeout = null;
+
+        const handleScroll = () => {
+             // 如果是自动滚动触发的事件，忽略
+             if (isAutoScrolling.value) return; 
+             
+             // 只有当鼠标悬停在歌词区域时，才认为是用户的主动滚动
+             if (!isHovering.value) return;
+
+             // 用户手动滚动
+             isUserScroll.value = true;
+             
+             // 用户停止滚动 2.5s 后恢复自动跟随
+             if (scrollTimeout) clearTimeout(scrollTimeout);
+             scrollTimeout = setTimeout(() => {
+                 isUserScroll.value = false;
+             }, 2500);
+        };
+
+        const scrollToActiveLyric = (immediate = false, isUserClick = false, targetIndex = -1) => {
+            if (!containerRef.value) return;
+            
+            const idx = targetIndex !== -1 ? targetIndex : activeIndex.value;
+            // 如果索引无效或列表为空
+            if (idx === -1 || !lyrics.value.length) return;
 
             const container = containerRef.value;
-            const activeEl = container.querySelector(".lyrics.active");
+            // 直接通过索引查找元素，比 querySelector(".active") 更可靠
+            const lyricElements = container.querySelectorAll('.lyrics');
+            if (!lyricElements || !lyricElements[idx]) return;
+            
+            const activeEl = lyricElements[idx];
 
             nextTick(() => {
-                if (!activeEl) return;
-
                 const containerH = container.clientHeight;
                 const elTop = activeEl.offsetTop;
                 const elH = activeEl.clientHeight;
                 let targetScroll;
-                const currentStyle = configStore.general.lyricsStyle || 'modern';
-
-                if (isUserClick) {
-                    targetScroll = elTop - (containerH / 2) + (elH / 2);
-                } else {
-                    if (currentStyle === 'classic') {
-                        targetScroll = elTop - (containerH / 3.25) + (elH / 2);
-                    } else {
-                        targetScroll = elTop - (containerH * 0.25) + (elH / 2);
-                    }
-                }
+                // 更加激进的滚动位置
+                const offsetRatio = 0.5;
+                targetScroll = elTop - (containerH * offsetRatio) + (elH / 2);
 
                 targetScroll = Math.max(0, targetScroll);
+                
+                // 标记开始自动滚动，防止 handleScroll 误判
+                isAutoScrolling.value = true;
 
                 if (immediate || isUserClick) {
                     container.style.scrollBehavior = 'auto';
                     container.scrollTop = targetScroll;
-                    requestAnimationFrame(() => container.style.scrollBehavior = 'smooth');
+                    requestAnimationFrame(() => {
+                         container.style.scrollBehavior = 'smooth';
+                         // 稍作延迟释放标志
+                         setTimeout(() => isAutoScrolling.value = false, 100);
+                    });
                 } else {
                     container.style.scrollBehavior = 'smooth';
                     container.scrollTop = targetScroll;
+                    setTimeout(() => isAutoScrolling.value = false, 500);
                 }
             });
         };
 
         // 监听 activeIndex 变化以滚动
         watch(activeIndex, () => {
+             // 只有在非用户滚动状态下才自动跟随
              if (!isUserScroll.value) {
                 scrollToActiveLyric();
              }
@@ -168,15 +206,20 @@ export default {
         // 用户点击歌词跳转
         const handleLyricClick = async (time, index) => {
             if (time < 0) return;
-            isUserScroll.value = true; // 暂停自动滚动
             
-            // activeIndex 会由 composable 自动更新
+            // 点击跳转应打破用户滚动锁定，并强制执行
+            isUserScroll.value = false;
+            if (scrollTimeout) clearTimeout(scrollTimeout);
 
             await playerStore.seek(time);
-            visualTime.value = time; // 立即同步视觉时间
+            
+            visualTime.value = time;
+            const forceSync = () => { visualTime.value = playerStore.currentTime; };
+            requestAnimationFrame(forceSync);
+            requestAnimationFrame(() => requestAnimationFrame(forceSync));
 
-            nextTick(() => scrollToActiveLyric(true, true));
-            setTimeout(() => isUserScroll.value = false, 600); // 600ms 后恢复自动滚动
+            // 明确传入目标 index，確保即使 DOM class 更新滞后也能正确找到元素
+            nextTick(() => scrollToActiveLyric(true, true, index));
         };
 
         onMounted(() => {
@@ -191,7 +234,8 @@ export default {
 
         return {
             lyrics, loading, containerRef, configStore,
-            isActive, isWordActive, getKaraokeStyle, handleLyricClick
+            isActive, isWordActive, getKaraokeStyle, handleLyricClick,
+            handleScroll, isHovering
         };
     }
 };
