@@ -26,7 +26,6 @@
         </div>
       </div>
       <div v-else class="lyric-placeholder">
-        {{ $t('player.musicName') }} <!-- 暂时显示应用名或等待提示 -->
       </div>
     </div>
   </div>
@@ -69,8 +68,6 @@ export default {
         if (t < word.start) return { '--progress': '0%', color: 'var(--md-sys-color-on-surface-variant)' };
 
         const progress = ((t - word.start) / (word.end - word.start)) * 100;
-        // 使用 CSS 变量实现渐变填充效果需要更复杂的 CSS，这里简化为颜色变化或简单的进度
-        // 为了效果好，我们可以使用 background-clip: text 配合 linear-gradient
         return { 
             '--progress': `${progress.toFixed(2)}%`,
             backgroundImage: `linear-gradient(90deg, var(--md-sys-color-primary) ${progress}%, var(--md-sys-color-on-surface-variant) ${progress}%)`
@@ -121,8 +118,6 @@ export default {
           return;
       }
 
-
-
       // 绘制频谱条
       const bufferLength = audioData.length;
       const barWidth = (width / bufferLength) * 0.8; // 留出间隙
@@ -143,9 +138,8 @@ export default {
 
       for (let i = 0; i < bufferLength; i++) {
         // 极小的底噪，确保最低限度的动画，同时避免过多抖动
-        const baseNoise = 0.02;
+        const baseNoise = 0.02 + (Math.random() * 0.02);
         const value = audioData[i] + baseNoise;
-        // 适度的缩放系数，既保持动感又避免频繁触顶
         // 使用对数缩放以增强微小变化的可视性
         let barHeight = Math.pow(value, 0.9) * height * 0.9; 
         
@@ -179,16 +173,29 @@ export default {
       const deltaTime = (timestamp - lastFrameTime) / 1000;
       lastFrameTime = timestamp;
       
+      const realTime = playerStore.currentTime;
+      
       if (playerStore.isPlaying) {
-          visualTime.value += deltaTime;
+          // 播放中：基于帧间隔累加时间，并动态调整速度以消除漂移 (P控制器)
+          let speed = 1.0;
+          const diff = visualTime.value - realTime;
+
+          if (Math.abs(diff) > 0.5) {
+              // 误差超过 0.5s，视为 Seek 或卡顿，硬同步
+              visualTime.value = realTime;
+          } else {
+              // 微小误差：平滑追赶
+              speed = 1.0 - diff;
+              speed = Math.max(0.5, Math.min(1.5, speed));
+              visualTime.value += deltaTime * speed;
+          }
       } else {
-          visualTime.value = playerStore.currentTime;
+          // 暂停中：直接同步
+          visualTime.value = realTime;
       }
       
-      // 同步校正
-      if (Math.abs(visualTime.value - playerStore.currentTime) > 0.25) {
-          visualTime.value = playerStore.currentTime;
-      }
+      // 移除旧的硬同步代码，因为它已经包含在上面的逻辑中了
+      // if (Math.abs(visualTime.value - playerStore.currentTime) > 0.25) ...
 
       animationId = requestAnimationFrame(drawVisualizer);
     };
@@ -236,7 +243,7 @@ export default {
   width: 100%;
   min-height: 100px;
   background-color: var(--md-sys-color-surface-container-high);
-  border-radius: 0; /* 直角 */
+  border-radius: 0;
   overflow: hidden;
   position: relative;
 }
