@@ -35,7 +35,7 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { usePlayerStore } from '@/stores/player';
 import { useLyrics } from '@/composables/useLyrics';
-import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export default {
   name: 'VisualizerPanel',
@@ -47,7 +47,20 @@ export default {
     const visualizerContainer = ref(null);
     let animationId = null;
     let audioData = [];
-    let isFetching = false;
+    let smoothedAudioData = [];
+    let lastUpdateTime = 0;
+    let spectrumListener = null;
+
+    // 平滑插值函数
+    const smoothData = (currentData, targetData, smoothingFactor = 0.7) => {
+      const result = new Array(128).fill(0);
+      for (let i = 0; i < 128; i++) {
+        const current = currentData[i] || 0;
+        const target = targetData[i] || 0;
+        result[i] = current * smoothingFactor + target * (1 - smoothingFactor);
+      }
+      return result;
+    };
 
     // 当前歌词
     const currentLyric = computed(() => {
@@ -58,7 +71,6 @@ export default {
     });
 
     // --- 视觉时间 (用于卡拉OK) ---
-    // 这里简单复用 LyricsDisplay 的逻辑，或者简化
     const visualTime = ref(0);
     let lastFrameTime = 0;
 
@@ -86,22 +98,18 @@ export default {
       // 清空画布
       ctx.clearRect(0, 0, width, height);
       
-      // 获取频谱数据
-      if (!isFetching && playerStore.isPlaying) {
-          isFetching = true;
-          invoke('get_spectrum_data').then((data) => {
-              if (data && data.length > 0) {
-                  audioData = data;
-              }
-              isFetching = false;
-          }).catch((e) => {
-              console.error('Failed to get spectrum data:', e);
-              isFetching = false;
-          });
+      // 频谱数据现在通过事件监听获取，不再需要频繁请求
+
+      // 应用平滑处理
+      if (audioData.length > 0) {
+        smoothedAudioData = smoothData(smoothedAudioData, audioData, 0.85);
       }
+      
+      // 绘制频谱条
+      const drawData = smoothedAudioData.length > 0 ? smoothedAudioData : audioData;
 
       // 如果没有数据或暂停，显示直线
-      if (!playerStore.isPlaying || audioData.length === 0) {
+      if (!playerStore.isPlaying || drawData.length === 0) {
           ctx.beginPath();
           ctx.moveTo(0, height / 2);
           ctx.lineTo(width, height / 2);
@@ -118,8 +126,7 @@ export default {
           return;
       }
 
-      // 绘制频谱条
-      const bufferLength = audioData.length;
+      const bufferLength = drawData.length;
       const barWidth = (width / bufferLength) * 0.8; // 留出间隙
       const gap = (width / bufferLength) * 0.2;
       let x = 0;
@@ -138,8 +145,8 @@ export default {
 
       for (let i = 0; i < bufferLength; i++) {
         // 极小的底噪，确保最低限度的动画，同时避免过多抖动
-        const baseNoise = 0.02 + (Math.random() * 0.02);
-        const value = audioData[i] + baseNoise;
+        const baseNoise = 0.01 + (Math.random() * 0.01);
+        const value = drawData[i] + baseNoise;
         // 使用对数缩放以增强微小变化的可视性
         let barHeight = Math.pow(value, 0.9) * height * 0.9; 
         
@@ -193,10 +200,6 @@ export default {
           // 暂停中：直接同步
           visualTime.value = realTime;
       }
-      
-      // 移除旧的硬同步代码，因为它已经包含在上面的逻辑中了
-      // if (Math.abs(visualTime.value - playerStore.currentTime) > 0.25) ...
-
       animationId = requestAnimationFrame(drawVisualizer);
     };
 
@@ -207,15 +210,35 @@ export default {
         }
     };
 
-    onMounted(() => {
+    onMounted(async () => {
       window.addEventListener('resize', resizeCanvas);
       resizeCanvas();
+      
+      // 监听频谱更新事件
+      try {
+        spectrumListener = await listen('spectrum-update', (event) => {
+          if (event.payload && event.payload.data) {
+            const now = Date.now();
+            // 限制更新频率为60fps
+            if (now - lastUpdateTime >= 16) {
+              audioData = event.payload.data;
+              lastUpdateTime = now;
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Failed to setup spectrum listener:', error);
+      }
+      
       animationId = requestAnimationFrame(drawVisualizer);
     });
 
-    onUnmounted(() => {
+    onUnmounted(async () => {
       window.removeEventListener('resize', resizeCanvas);
       if (animationId) cancelAnimationFrame(animationId);
+      if (spectrumListener) {
+        spectrumListener();
+      }
     });
 
     return {

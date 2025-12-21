@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{command, State};
+use tauri::{command, State, AppHandle, Emitter};
 
 /// 表示当前音频播放器的状态
 #[derive(Debug, serde::Serialize, Clone)]
@@ -24,6 +24,27 @@ pub struct PlaybackStatus {
     pub position_secs: f32,
     #[serde(rename = "volume")]
     pub volume: f32,
+}
+
+/// 频谱数据更新事件
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpectrumUpdateEvent {
+    pub data: Vec<f32>,
+    pub timestamp: u64,
+}
+
+/// 发送频谱数据更新事件
+fn emit_spectrum_update(app: &AppHandle, spectrum_data: &[f32]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let event = SpectrumUpdateEvent {
+        data: spectrum_data.to_vec(),
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64,
+    };
+    
+    app.emit("spectrum-update", event)?;
+    Ok(())
 }
 
 impl PlaybackStatus {
@@ -46,6 +67,8 @@ where
     spectrum_data: Arc<Mutex<Vec<f32>>>,
     buffer: Vec<f32>,
     prev_spectrum: Vec<f32>,
+    app_handle: Option<AppHandle>,
+    last_emit_time: std::sync::atomic::AtomicU64,
 }
 
 impl<I> VisualizationSource<I>
@@ -56,6 +79,7 @@ where
         input: I,
         waveform_data: Arc<Mutex<Vec<f32>>>,
         spectrum_data: Arc<Mutex<Vec<f32>>>,
+        app_handle: Option<AppHandle>,
     ) -> Self {
         Self {
             input,
@@ -63,6 +87,8 @@ where
             spectrum_data,
             buffer: Vec::with_capacity(1024),
             prev_spectrum: vec![0.0; 128],
+            app_handle,
+            last_emit_time: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -129,6 +155,24 @@ where
                     if let Ok(mut spec) = self.spectrum_data.try_lock() {
                         *spec = self.prev_spectrum.clone();
                     }
+
+                    // 发送频谱更新事件（限制推送频率为60fps，约16ms间隔）
+                    if let Some(ref app) = self.app_handle {
+                        let current_time = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        
+                        let last_time = self.last_emit_time.load(std::sync::atomic::Ordering::Relaxed);
+                        
+                        if current_time - last_time >= 16 { // 限制推送频率约60fps
+                            if let Err(e) = emit_spectrum_update(app, &self.prev_spectrum) {
+                                eprintln!("Failed to emit spectrum update: {}", e);
+                            } else {
+                                self.last_emit_time.store(current_time, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    }
                 }
 
                 // 更新波形数据用于调试或备用
@@ -189,6 +233,7 @@ pub fn get_spectrum_data(state: State<AppState>) -> Result<Vec<f32>, String> {
 /// 播放指定的音轨
 #[command]
 pub fn play_track(
+    app: AppHandle,
     state: State<AppState>,
     path: String,
     position: Option<f32>,
@@ -223,6 +268,7 @@ pub fn play_track(
                 crate::audio_decoder::SymphoniaSource::new(symphonia_decoder),
                 waveform_data,
                 spectrum_data,
+                Some(app.clone()),
             ))
         }
         Err(e) => {
@@ -234,6 +280,7 @@ pub fn play_track(
                 rodio_source.convert_samples::<f32>(),
                 waveform_data,
                 spectrum_data,
+                Some(app.clone()),
             ))
         }
     };
@@ -319,7 +366,7 @@ pub fn is_track_finished(state: State<AppState>) -> Result<bool, String> {
 
 /// 跳转到音轨的指定位置
 #[command]
-pub fn seek_track(state: State<AppState>, time: f32) -> Result<(), String> {
+pub fn seek_track(app: AppHandle, state: State<AppState>, time: f32) -> Result<(), String> {
     let player_state = &state.player;
     let duration = Duration::from_secs_f32(time);
 
@@ -335,6 +382,7 @@ pub fn seek_track(state: State<AppState>, time: f32) -> Result<(), String> {
                                 crate::audio_decoder::SymphoniaSource::new(decoder),
                                 Arc::clone(&player_state.waveform_data),
                                 Arc::clone(&player_state.spectrum_data),
+                                Some(app.clone()),
                             ));
 
                         // 停止当前播放并替换为新源

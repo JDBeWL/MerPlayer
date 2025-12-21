@@ -6,7 +6,7 @@ use super::AppState;
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{StreamConfig, SampleFormat};
 use rodio::{OutputStream, Sink};
-use tauri::{command, State};
+use tauri::{command, State, AppHandle};
 
 /// 表示音频设备信息
 #[derive(Debug, serde::Serialize, Clone)]
@@ -57,7 +57,7 @@ pub fn get_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
 
 /// 切换音频输出设备
 #[command]
-pub fn set_audio_device(state: State<AppState>, device_name: String, current_time: Option<f32>) -> Result<(), String> {
+pub fn set_audio_device(app: AppHandle, state: State<AppState>, device_name: String, current_time: Option<f32>) -> Result<(), String> {
     println!("Attempting to switch to audio device: {}", device_name);
 
     let host = cpal::default_host();
@@ -117,7 +117,7 @@ pub fn set_audio_device(state: State<AppState>, device_name: String, current_tim
     if let Some(path) = current_path {
         // 使用现有的play_track函数重新加载音轨
         // 因为play_track会处理解码和播放
-        super::playback::play_track(state, path, current_time)?;
+        super::playback::play_track(app.clone(), state, path, current_time)?;
     }
 
     println!("Successfully switched to audio device (exclusive mode: {}).", exclusive_mode);
@@ -270,7 +270,7 @@ where
 
 /// 切换独占模式
 #[command]
-pub fn toggle_exclusive_mode(state: State<AppState>, enabled: bool, current_time: Option<f32>) -> Result<(), String> {
+pub fn toggle_exclusive_mode(app: AppHandle, state: State<AppState>, enabled: bool, current_time: Option<f32>) -> Result<(), String> {
     println!("Toggling exclusive mode: {} with current_time: {:?}", enabled, current_time);
     
     // 检查之前的独占模式状态
@@ -336,7 +336,7 @@ pub fn toggle_exclusive_mode(state: State<AppState>, enabled: bool, current_time
         }
         
         // 重新加载当前音轨
-        super::playback::play_track(state, path.clone(), current_time)?;
+        super::playback::play_track(app.clone(), state, path.clone(), current_time)?;
         
         println!("Successfully recreated audio stream with exclusive mode: {}", enabled);
     } else {
