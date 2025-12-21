@@ -297,7 +297,7 @@ canvas {
 .lyric-original {
   font-size: 36px;
   font-weight: 700;
-  color: var(--md-sys-color-on-surface);
+  color: var(--md-sys-color-primary);
   line-height: 1.3;
   transition: all 0.3s ease;
 }
