@@ -254,6 +254,7 @@ export default {
       canvasRef,
       visualizerContainer,
       currentLyric,
+      isLyricTypeASS,
       getKaraokeStyle
     };
   }
