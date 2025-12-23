@@ -94,11 +94,15 @@ fn main() {
             media::commands::read_directory,
             media::commands::get_audio_files,
             media::commands::read_lyrics_file,
+            media::commands::write_lyrics_file,
             media::commands::get_all_audio_files,
             media::commands::check_file_exists,
             // 元数据命令
             media::commands::get_track_metadata,
             media::commands::get_tracks_metadata_batch,
+            // 网易云音乐API命令
+            media::commands::netease_search_songs,
+            media::commands::netease_get_lyrics,
             // 播放命令
             audio::commands::play_track,
             audio::commands::pause_track,

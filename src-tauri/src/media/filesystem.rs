@@ -175,6 +175,18 @@ pub fn read_lyrics_file_internal(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
+/// 写入歌词文件内容
+pub fn write_lyrics_file_internal(path: &str, content: &str) -> Result<(), String> {
+    // 确保父目录存在
+    if let Some(parent) = Path::new(path).parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+    }
+    
+    fs::write(path, content).map_err(|e| format!("Failed to write file: {}", e))
+}
+
 /// 检查是否为音频文件
 fn is_audio_file(entry: &DirEntry) -> bool {
     entry

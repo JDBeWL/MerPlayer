@@ -66,7 +66,11 @@
   "lyrics": {
     "title": "歌词",
     "notFound": "未找到歌词",
-    "loading": "加载歌词中..."
+    "noTrackPlaying": "选择一首歌曲开始播放",
+    "loading": "加载歌词中...",
+    "fetchOnline": "在线获取歌词",
+    "fetching": "获取中...",
+    "fromOnline": "在线歌词"
   },
   "config": {
     "title": "配置",
@@ -106,6 +110,14 @@
     "lyricsStyle": "歌词样式",
     "lyricsStyleModern": "现代",
     "lyricsStyleClassic": "经典",
+    "lyricsSettings": "歌词设置",
+    "onlineLyrics": "在线歌词",
+    "enableOnlineFetch": "启用网络歌词加载",
+    "enableOnlineFetchDesc": "当本地没有歌词文件时，自动从网易云音乐获取歌词",
+    "autoSaveOnlineLyrics": "自动保存在线歌词",
+    "autoSaveOnlineLyricsDesc": "将下载的歌词自动保存到歌曲所在目录",
+    "preferTranslation": "显示翻译歌词",
+    "preferTranslationDesc": "如果有翻译歌词，将原文和翻译一起显示",
     "audioDeviceSettings": "音频设备",
     "defaultDevice": "默认",
     "exclusiveMode": "独占模式",

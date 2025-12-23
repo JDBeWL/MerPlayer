@@ -182,6 +182,50 @@
         </div>
       </div>
       
+      <!-- 歌词设置 -->
+      <div v-if="activeTab === 'lyrics'" class="tab-content">
+        <div class="content-header">
+          <h3>{{ $t('config.lyricsSettings') }}</h3>
+        </div>
+        
+        <div class="settings-section">
+          <h4 class="section-title">{{ $t('config.onlineLyrics') || '在线歌词' }}</h4>
+          
+          <div class="setting-item" @click="toggleLyricsSetting('enableOnlineFetch')">
+            <div class="setting-info">
+              <span class="setting-label">{{ $t('config.enableOnlineFetch') }}</span>
+              <span class="setting-description">{{ $t('config.enableOnlineFetchDesc') }}</span>
+            </div>
+            <div class="switch" :class="{ active: configStore.lyrics?.enableOnlineFetch }">
+              <div class="switch-track"></div>
+              <div class="switch-handle"></div>
+            </div>
+          </div>
+          
+          <div class="setting-item" @click="toggleLyricsSetting('autoSaveOnlineLyrics')">
+            <div class="setting-info">
+              <span class="setting-label">{{ $t('config.autoSaveOnlineLyrics') }}</span>
+              <span class="setting-description">{{ $t('config.autoSaveOnlineLyricsDesc') }}</span>
+            </div>
+            <div class="switch" :class="{ active: configStore.lyrics?.autoSaveOnlineLyrics }">
+              <div class="switch-track"></div>
+              <div class="switch-handle"></div>
+            </div>
+          </div>
+          
+          <div class="setting-item" @click="toggleLyricsSetting('preferTranslation')">
+            <div class="setting-info">
+              <span class="setting-label">{{ $t('config.preferTranslation') }}</span>
+              <span class="setting-description">{{ $t('config.preferTranslationDesc') }}</span>
+            </div>
+            <div class="switch" :class="{ active: configStore.lyrics?.preferTranslation }">
+              <div class="switch-track"></div>
+              <div class="switch-handle"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <!-- 播放列表设置 -->
       <div v-if="activeTab === 'playlist'" class="tab-content">
         <div class="content-header">
@@ -266,6 +310,7 @@ const systemFonts = ref(['system-ui', 'sans-serif', 'serif', 'monospace']);
 const tabs = [
   { id: 'folders', icon: 'folder', label: 'config.musicFolders' },
   { id: 'general', icon: 'settings', label: 'config.generalSettings' },
+  { id: 'lyrics', icon: 'lyrics', label: 'config.lyricsSettings' },
   { id: 'titleExtraction', icon: 'title', label: 'config.titleExtraction' },
   { id: 'playlist', icon: 'queue_music', label: 'config.playlistSettings' },
   { id: 'audioDevice', icon: 'speaker', label: 'config.audioDeviceSettings' },
@@ -346,6 +391,20 @@ const toggleTitleSetting = async (key) => {
 // 切换播放列表设置
 const togglePlaylistSetting = async (key) => {
   configStore.playlist[key] = !configStore.playlist[key];
+  await saveConfig();
+};
+
+// 切换歌词设置
+const toggleLyricsSetting = async (key) => {
+  if (!configStore.lyrics) {
+    configStore.lyrics = {
+      enableOnlineFetch: false,
+      autoSaveOnlineLyrics: true,
+      preferTranslation: true,
+      onlineSource: 'netease'
+    };
+  }
+  configStore.lyrics[key] = !configStore.lyrics[key];
   await saveConfig();
 };
 
@@ -505,6 +564,13 @@ onMounted(() => {
 .setting-label {
   font-size: 16px;
   color: var(--md-sys-color-on-surface);
+}
+
+.setting-description {
+  display: block;
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  margin-top: 4px;
 }
 
 /* MD3 Switch */

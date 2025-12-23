@@ -4,9 +4,10 @@
 
 use super::filesystem::{
     check_file_exists_internal, get_all_audio_files_from_dirs, get_audio_files_from_dir, read_dir,
-    read_lyrics_file_internal,
+    read_lyrics_file_internal, write_lyrics_file_internal,
 };
 use super::metadata::{Playlist, TrackMetadata, get_track_metadata_internal};
+use super::netease;
 use crate::AppState;
 use tauri::{State, command};
 
@@ -44,6 +45,12 @@ pub fn read_lyrics_file(path: String) -> Result<String, String> {
     read_lyrics_file_internal(&path)
 }
 
+/// 写入歌词文件内容
+#[command]
+pub fn write_lyrics_file(path: String, content: String) -> Result<(), String> {
+    write_lyrics_file_internal(&path, &content)
+}
+
 /// 获取音轨的元数据信息
 #[command]
 pub fn get_track_metadata(path: String) -> Result<TrackMetadata, String> {
@@ -58,4 +65,20 @@ pub fn get_tracks_metadata_batch(paths: Vec<String>) -> Vec<TrackMetadata> {
         .into_iter()
         .filter_map(|path| get_track_metadata_internal(&path).ok())
         .collect()
+}
+
+/// 搜索网易云音乐歌曲
+#[command]
+pub async fn netease_search_songs(
+    keyword: String,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<netease::SearchSongResult>, String> {
+    netease::search_songs(&keyword, limit.unwrap_or(10), offset.unwrap_or(0)).await
+}
+
+/// 获取网易云音乐歌词
+#[command]
+pub async fn netease_get_lyrics(song_id: String) -> Result<netease::LyricsData, String> {
+    netease::get_lyrics(&song_id).await
 }

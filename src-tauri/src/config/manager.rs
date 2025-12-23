@@ -21,6 +21,9 @@ pub struct AppConfig {
     pub general: GeneralConfig,
     /// 音频设置
     pub audio: AudioConfig,
+    /// 歌词设置
+    #[serde(default)]
+    pub lyrics: LyricsConfig,
 }
 
 /// 子目录扫描配置
@@ -76,6 +79,28 @@ pub struct AudioConfig {
     pub volume: f32,
 }
 
+/// 歌词设置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsConfig {
+    #[serde(default)]
+    pub enable_online_fetch: bool,
+    #[serde(default = "default_true")]
+    pub auto_save_online_lyrics: bool,
+    #[serde(default = "default_true")]
+    pub prefer_translation: bool,
+    #[serde(default = "default_online_source")]
+    pub online_source: String,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+fn default_online_source() -> String {
+    "netease".to_string()
+}
+
 const fn default_volume() -> f32 {
     0.5
 }
@@ -93,6 +118,7 @@ impl Default for AppConfig {
             playlist: PlaylistConfig::default(),
             general: GeneralConfig::default(),
             audio: AudioConfig::default(),
+            lyrics: LyricsConfig::default(),
         }
     }
 }
@@ -154,6 +180,17 @@ impl Default for AudioConfig {
         Self {
             exclusive_mode: false,
             volume: default_volume(),
+        }
+    }
+}
+
+impl Default for LyricsConfig {
+    fn default() -> Self {
+        Self {
+            enable_online_fetch: false,
+            auto_save_online_lyrics: true,
+            prefer_translation: true,
+            online_source: "netease".to_string(),
         }
     }
 }

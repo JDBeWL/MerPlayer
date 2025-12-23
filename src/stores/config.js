@@ -57,6 +57,14 @@ export const useConfigStore = defineStore('config', {
       lyricsStyle: 'modern',           // 歌词样式
     },
 
+    // 歌词设置
+    lyrics: {
+      enableOnlineFetch: false,         // 是否启用网络歌词加载
+      autoSaveOnlineLyrics: true,       // 自动保存下载的歌词到本地
+      preferTranslation: true,          // 优先显示翻译歌词
+      onlineSource: 'netease',          // 在线歌词源: 'netease'
+    },
+
     // UI设置（原ui.js的功能）
     ui: {
       showSettings: false,              // 是否显示设置面板
@@ -261,6 +269,17 @@ export const useConfigStore = defineStore('config', {
      */
     setAudioConfig(config) {
       this.audio = { ...this.audio, ...config }
+      // 只在自动保存配置启用且不是程序启动时才保存
+      if (this.general.autoSaveConfig && !this._isInitializing) {
+        this.saveConfig()
+      }
+    },
+
+    /**
+     * 设置歌词配置
+     */
+    setLyricsConfig(config) {
+      this.lyrics = { ...this.lyrics, ...config }
       // 只在自动保存配置启用且不是程序启动时才保存
       if (this.general.autoSaveConfig && !this._isInitializing) {
         this.saveConfig()

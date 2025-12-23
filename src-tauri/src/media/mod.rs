@@ -5,6 +5,7 @@
 pub mod commands;
 pub mod filesystem;
 pub mod metadata;
+pub mod netease;
 
 // 重新导出常用类型
 pub use filesystem::{get_audio_files_from_dir, read_dir, AUDIO_EXTENSIONS};

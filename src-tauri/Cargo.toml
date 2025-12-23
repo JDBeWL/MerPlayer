@@ -32,6 +32,11 @@ tauri-plugin-dialog = "2.4"
 tauri-plugin-fs = "2.4"
 tauri-plugin-shell = "2.3"
 crossbeam-channel = "0.5"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+urlencoding = "2"
+aes = "0.8"
+md5 = "0.7"
 
 [lints.rust]
 unsafe_code = "forbid"

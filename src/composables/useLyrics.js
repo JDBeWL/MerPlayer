@@ -1,19 +1,26 @@
-import { ref, watch, watchEffect, nextTick } from 'vue';
+﻿import { ref, watch, watchEffect } from 'vue';
 import { usePlayerStore } from '@/stores/player';
+import { useConfigStore } from '@/stores/config';
 import { FileUtils } from '@/utils/fileUtils';
+import { neteaseApi } from '@/utils/neteaseApi';
+import { invoke } from '@tauri-apps/api/core';
+
+// 模块级别的在线歌词缓存，避免组件重新挂载时丢失
+const onlineLyricsCache = new Map(); // key: trackPath, value: { lrc: string, parsed: array, source: string }
 
 export function useLyrics() {
     const playerStore = usePlayerStore();
+    const configStore = useConfigStore();
     const lyrics = ref([]);
     const loading = ref(false);
     const activeIndex = ref(-1);
+    const lyricsSource = ref('local');
+    const onlineLyricsError = ref(null);
 
-    // --- 歌词解析器 (LRC) ---
     const parseLRC = (lrcText) => {
         const lines = lrcText.split("\n");
         const pattern = /\[(\d{2}):(\d{2}):(\d{2})\]|\[(\d{2}):(\d{2})\.(\d{2,3})\]/g;
         const resultMap = {};
-
         for (const line of lines) {
             const timestamps = [];
             let match;
@@ -26,15 +33,11 @@ export function useLyrics() {
                 }
                 timestamps.push({ time, index: match.index });
             }
-
             if (timestamps.length < 1) continue;
             const text = line.replace(pattern, "").trim();
             if (!text) continue;
-
             const startTime = timestamps[0].time;
             resultMap[startTime] = resultMap[startTime] || { time: startTime, texts: [], karaoke: null };
-
-            // 如果一行有多个时间戳，视为简单卡拉OK
             if (timestamps.length > 1) {
                 resultMap[startTime].karaoke = {
                     fullText: text,
@@ -46,7 +49,6 @@ export function useLyrics() {
         return Object.values(resultMap).sort((a, b) => a.time - b.time);
     };
 
-    // --- 歌词解析器 (ASS) ---
     const parseASS = (assText) => {
         const lines = assText.split('\n');
         const dialogues = [];
@@ -66,7 +68,7 @@ export function useLyrics() {
         }
         const groupedMap = new Map();
         dialogues.forEach(d => {
-            const key = `${d.startTime.toFixed(3)}-${d.endTime.toFixed(3)}`;
+            const key = d.startTime.toFixed(3) + '-' + d.endTime.toFixed(3);
             if (!groupedMap.has(key)) {
                 groupedMap.set(key, { startTime: d.startTime, endTime: d.endTime, texts: { orig: '', ts: '' }, karaoke: null });
             }
@@ -77,13 +79,11 @@ export function useLyrics() {
         const result = [];
         groupedMap.forEach(group => {
             const parseKaraoke = (text) => {
-                // 修复正则：允许空文本（[^{}]*）以捕获纯时间占位符；统一 k/kf 处理
                 const karaokeTag = /{\\k[f]?(\d+)}([^{}]*)/g;
                 let words = [];
                 let accTime = group.startTime;
                 let match;
                 while ((match = karaokeTag.exec(text)) !== null) {
-                    // \k 和 \kf 均为 1cs (0.01s) 单位
                     const duration = parseInt(match[1]) * 0.01;
                     words.push({ text: match[2], start: accTime, end: accTime + duration });
                     accTime += duration;
@@ -101,35 +101,153 @@ export function useLyrics() {
         return result.sort((a, b) => a.time - b.time);
     };
 
-    // --- 核心逻辑：加载与同步 ---
+    const fetchOnlineLyrics = async (track) => {
+        if (!track) return null;
+        try {
+            const title = track.title || track.name || FileUtils.getFileNameWithoutExtension(track.path);
+            const artist = track.artist || '';
+            const duration = track.duration ? track.duration * 1000 : 0;
+            console.log('Fetching online lyrics for: ' + title + ' - ' + artist);
+            const lyricsData = await neteaseApi.searchAndGetLyrics(title, artist, duration);
+            if (!lyricsData || !lyricsData.lrc) {
+                console.log('No online lyrics found');
+                return null;
+            }
+            let lrcContent = lyricsData.lrc;
+            if (configStore.lyrics?.preferTranslation && lyricsData.tlyric) {
+                lrcContent = neteaseApi.mergeLyrics(lyricsData.lrc, lyricsData.tlyric);
+            }
+            return lrcContent;
+        } catch (error) {
+            console.error('Failed to fetch online lyrics:', error);
+            onlineLyricsError.value = error.message;
+            return null;
+        }
+    };
+
+    const saveLyricsToLocal = async (trackPath, lrcContent) => {
+        if (!trackPath || !lrcContent) return false;
+        try {
+            const baseName = FileUtils.getFileNameWithoutExtension(trackPath);
+            const directory = FileUtils.getDirectoryPath(trackPath);
+            const lyricsPath = directory + '/' + baseName + '.lrc';
+            await invoke('write_lyrics_file', { path: lyricsPath, content: lrcContent });
+            console.log('Lyrics saved to: ' + lyricsPath);
+            return true;
+        } catch (error) {
+            console.error('Failed to save lyrics:', error);
+            return false;
+        }
+    };
+
     const loadLyrics = async (trackPath) => {
-        if (!trackPath) { lyrics.value = []; return; }
+        if (!trackPath) { 
+            lyrics.value = []; 
+            lyricsSource.value = 'local';
+            onlineLyricsError.value = null;
+            return; 
+        }
+        
+        // 先检查缓存中是否有这首歌的在线歌词
+        const cached = onlineLyricsCache.get(trackPath);
+        if (cached) {
+            console.log('Using cached online lyrics for:', trackPath);
+            lyrics.value = cached.parsed;
+            lyricsSource.value = cached.source;
+            loading.value = false;
+            return;
+        }
+        
         loading.value = true;
         lyrics.value = [];
+        lyricsSource.value = 'local';
+        onlineLyricsError.value = null;
         try {
-            // 查找并读取歌词文件
             const lyricsPath = await FileUtils.findLyricsFile(trackPath);
             if (lyricsPath) {
                 const content = await FileUtils.readFile(lyricsPath);
                 const ext = FileUtils.getFileExtension(lyricsPath);
                 if (ext === 'lrc') lyrics.value = parseLRC(content);
                 else if (ext === 'ass') lyrics.value = parseASS(content);
+                lyricsSource.value = 'local';
+            } else if (configStore.lyrics?.enableOnlineFetch) {
+                console.log('No local lyrics found, trying online fetch...');
+                const track = playerStore.currentTrack;
+                const onlineLrc = await fetchOnlineLyrics(track);
+                if (onlineLrc) {
+                    const parsed = parseLRC(onlineLrc);
+                    lyrics.value = parsed;
+                    lyricsSource.value = 'online';
+                    
+                    // 缓存在线歌词
+                    onlineLyricsCache.set(trackPath, {
+                        lrc: onlineLrc,
+                        parsed: parsed,
+                        source: 'online'
+                    });
+                    
+                    if (configStore.lyrics?.autoSaveOnlineLyrics) {
+                        const saved = await saveLyricsToLocal(trackPath, onlineLrc);
+                        if (saved) {
+                            lyricsSource.value = 'local';
+                            // 保存成功后从缓存中移除，下次会从本地加载
+                            onlineLyricsCache.delete(trackPath);
+                        }
+                    }
+                }
             }
         } catch (e) {
-            console.error(e);
+            console.error('Error loading lyrics:', e);
+            onlineLyricsError.value = e.message;
         } finally {
             loading.value = false;
         }
     };
 
-    // 歌曲切换监听
+    const fetchAndSaveLyrics = async () => {
+        const track = playerStore.currentTrack;
+        if (!track) return false;
+        loading.value = true;
+        onlineLyricsError.value = null;
+        try {
+            const onlineLrc = await fetchOnlineLyrics(track);
+            if (onlineLrc) {
+                const parsed = parseLRC(onlineLrc);
+                lyrics.value = parsed;
+                lyricsSource.value = 'online';
+                
+                // 缓存在线歌词
+                onlineLyricsCache.set(track.path, {
+                    lrc: onlineLrc,
+                    parsed: parsed,
+                    source: 'online'
+                });
+                
+                // 只有在启用自动保存时才保存到本地
+                if (configStore.lyrics?.autoSaveOnlineLyrics) {
+                    const saved = await saveLyricsToLocal(track.path, onlineLrc);
+                    if (saved) {
+                        lyricsSource.value = 'local';
+                        // 保存成功后从缓存中移除
+                        onlineLyricsCache.delete(track.path);
+                    }
+                }
+                return true;
+            }
+            return false;
+        } catch (e) {
+            console.error('Error fetching lyrics:', e);
+            onlineLyricsError.value = e.message;
+            return false;
+        } finally {
+            loading.value = false;
+        }
+    };
+
     watch(() => playerStore.currentTrack?.path, loadLyrics, { immediate: true });
 
-    // 播放进度监听 (使用二分查找优化性能)
     watchEffect(() => {
-        // 减少提前量，使歌词同步更准确，特别是对于逐字歌词
-        const currentTime = playerStore.currentTime + 0.05; // 减小到50ms提前量
-
+        const currentTime = playerStore.currentTime + 0.05;
         let l = 0, r = lyrics.value.length - 1, idx = -1;
         while (l <= r) {
             const mid = (l + r) >> 1;
@@ -140,7 +258,6 @@ export function useLyrics() {
                 r = mid - 1;
             }
         }
-
         if (idx !== activeIndex.value) {
             activeIndex.value = idx;
         }
@@ -149,6 +266,10 @@ export function useLyrics() {
     return {
         lyrics,
         loading,
-        activeIndex
+        activeIndex,
+        lyricsSource,
+        onlineLyricsError,
+        fetchAndSaveLyrics,
+        loadLyrics
     };
 }

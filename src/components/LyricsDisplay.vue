@@ -2,7 +2,21 @@
     <div class="lyrics-wrapper" :class="`lyrics-style-${configStore.general.lyricsStyle}`">
         <div class="lyrics-display" ref="containerRef" @scroll="handleScroll" @mouseenter="isHovering = true" @mouseleave="isHovering = false">
             <div v-if="loading" class="loading">{{ $t('lyrics.loading') }}</div>
-            <div v-else-if="!lyrics.length" class="no-lyrics">{{ $t('lyrics.notFound') }}</div>
+            
+            <!-- 没有播放音乐时显示空闲状态 -->
+            <div v-else-if="!hasCurrentTrack" class="no-lyrics idle-state">
+                <span class="material-symbols-rounded idle-icon">music_note</span>
+                <span>{{ $t('lyrics.noTrackPlaying') }}</span>
+            </div>
+            
+            <!-- 有音乐但没有歌词 -->
+            <div v-else-if="!lyrics.length" class="no-lyrics">
+                <span>{{ $t('lyrics.notFound') }}</span>
+                <button v-if="configStore.lyrics?.enableOnlineFetch || true" class="fetch-lyrics-btn" @click="handleFetchLyrics" :disabled="fetchingLyrics">
+                    <span class="material-symbols-rounded">{{ fetchingLyrics ? 'hourglass_empty' : 'cloud_download' }}</span>
+                    {{ fetchingLyrics ? $t('lyrics.fetching') : $t('lyrics.fetchOnline') }}
+                </button>
+            </div>
 
             <div v-else>
                 <div class="lyrics-spacer-up"></div>
@@ -32,13 +46,19 @@
                 <div class="lyrics-spacer-down"></div>
             </div>
         </div>
+        
+        <!-- 歌词来源指示器 -->
+        <div v-if="lyricsSource === 'online' && lyrics.length" class="lyrics-source-indicator">
+            <span class="material-symbols-rounded">cloud_done</span>
+            {{ $t('lyrics.fromOnline') }}
+        </div>
     </div>
 </template>
 
 <script>
 import { usePlayerStore } from '@/stores/player';
 import { useConfigStore } from '@/stores/config';
-import { nextTick, ref, watch, onMounted, onUnmounted } from 'vue';
+import { nextTick, ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useLyrics } from '@/composables/useLyrics';
 
 export default {
@@ -49,7 +69,30 @@ export default {
         const containerRef = ref(null);
 
         // 使用 composable
-        const { lyrics, loading, activeIndex } = useLyrics();
+        const lyricsComposable = useLyrics();
+        console.log('lyricsComposable:', lyricsComposable);
+        console.log('fetchAndSaveLyrics:', lyricsComposable.fetchAndSaveLyrics);
+        const { lyrics, loading, activeIndex, lyricsSource } = lyricsComposable;
+        
+        // 是否有当前播放的曲目
+        const hasCurrentTrack = computed(() => !!playerStore.currentTrack);
+        
+        // 手动获取歌词状态
+        const fetchingLyrics = ref(false);
+        
+        const handleFetchLyrics = async () => {
+            console.log('handleFetchLyrics called, composable:', lyricsComposable);
+            fetchingLyrics.value = true;
+            try {
+                if (typeof lyricsComposable.fetchAndSaveLyrics === 'function') {
+                    await lyricsComposable.fetchAndSaveLyrics();
+                } else {
+                    console.error('fetchAndSaveLyrics is not a function:', lyricsComposable);
+                }
+            } finally {
+                fetchingLyrics.value = false;
+            }
+        };
 
         // --- 视觉时间系统 ---
         const visualTime = ref(0);
@@ -242,9 +285,9 @@ export default {
         });
 
         return {
-            lyrics, loading, containerRef, configStore,
+            lyrics, loading, containerRef, configStore, lyricsSource, hasCurrentTrack,
             isActive, isWordActive, getKaraokeStyle, handleLyricClick,
-            handleScroll, isHovering
+            handleScroll, isHovering, fetchingLyrics, handleFetchLyrics
         };
     }
 };
@@ -276,10 +319,70 @@ export default {
 .no-lyrics {
     height: 100%;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     color: #888;
     font-size: 24px;
+    gap: 16px;
+}
+
+.idle-state {
+    color: var(--md-sys-color-on-surface-variant);
+    opacity: 0.6;
+}
+
+.idle-icon {
+    font-size: 64px;
+    margin-bottom: 8px;
+}
+
+.fetch-lyrics-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background-color: var(--md-sys-color-primary);
+    color: var(--md-sys-color-on-primary);
+    border: none;
+    border-radius: 24px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.fetch-lyrics-btn:hover:not(:disabled) {
+    background-color: var(--md-sys-color-primary-container);
+    color: var(--md-sys-color-on-primary-container);
+}
+
+.fetch-lyrics-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.fetch-lyrics-btn .material-symbols-rounded {
+    font-size: 20px;
+}
+
+.lyrics-source-indicator {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    background-color: var(--md-sys-color-surface-container);
+    color: var(--md-sys-color-on-surface-variant);
+    border-radius: 16px;
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.lyrics-source-indicator .material-symbols-rounded {
+    font-size: 16px;
 }
 
 .lyrics-spacer-up {

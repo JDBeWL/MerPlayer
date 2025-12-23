@@ -66,7 +66,11 @@
   "lyrics": {
     "title": "Lyrics",
     "notFound": "Lyrics not found",
-    "loading": "Loading lyrics..."
+    "noTrackPlaying": "Select a song to start playing",
+    "loading": "Loading lyrics...",
+    "fetchOnline": "Fetch Online Lyrics",
+    "fetching": "Fetching...",
+    "fromOnline": "Online Lyrics"
   },
   "config": {
     "title": "Configuration",
@@ -106,6 +110,14 @@
     "lyricsStyle": "Lyrics Style",
     "lyricsStyleModern": "Modern",
     "lyricsStyleClassic": "Classic",
+    "lyricsSettings": "Lyrics Settings",
+    "onlineLyrics": "Online Lyrics",
+    "enableOnlineFetch": "Enable Online Lyrics",
+    "enableOnlineFetchDesc": "Automatically fetch lyrics from NetEase Music when local lyrics are not found",
+    "autoSaveOnlineLyrics": "Auto Save Online Lyrics",
+    "autoSaveOnlineLyricsDesc": "Save downloaded lyrics to the song's directory automatically",
+    "preferTranslation": "Show Translation",
+    "preferTranslationDesc": "Display both original and translated lyrics when available",
     "audioDeviceSettings": "Audio Device",
     "defaultDevice": "Default",
     "exclusiveMode": "Exclusive Mode",
