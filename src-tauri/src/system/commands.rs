@@ -88,3 +88,17 @@ fn disable_mini_mode(window: &tauri::WebviewWindow) -> Result<(), String> {
 
     Ok(())
 }
+
+/// 获取当前运行平台
+#[command]
+pub fn get_platform() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
+}

@@ -3,6 +3,8 @@
 //! 提供音频播放、暂停、恢复、音量控制等功能。
 
 use super::decoder::{LockFreeSymphoniaSource, SymphoniaDecoder};
+
+#[cfg(windows)]
 use super::wasapi::PlaybackState;
 use crate::equalizer::{EqSettings, EQ_BAND_COUNT};
 use crate::AppState;
@@ -213,6 +215,7 @@ pub fn play_track_shared(app: &AppHandle, state: &State<AppState>, path: &str, p
 }
 
 /// 播放音轨（独占模式）
+#[cfg(windows)]
 pub fn play_track_exclusive(app: &AppHandle, state: &State<AppState>, path: &str, position: Option<f32>) -> Result<(), String> {
     let player = &state.player;
     player.decode_thread_stop.store(true, Ordering::SeqCst);
@@ -277,6 +280,13 @@ pub fn play_track_exclusive(app: &AppHandle, state: &State<AppState>, path: &str
     Ok(())
 }
 
+/// 播放音轨（独占模式）
+#[cfg(not(windows))]
+pub fn play_track_exclusive(_app: &AppHandle, _state: &State<AppState>, _path: &str, _position: Option<f32>) -> Result<(), String> {
+    Err("Exclusive mode is only supported on Windows".to_string())
+}
+
+#[cfg(windows)]
 fn decode_and_push_to_wasapi(
     mut source: LockFreeSymphoniaSource,
     wasapi: Arc<Mutex<Option<super::wasapi::WasapiExclusivePlayback>>>,
@@ -436,18 +446,36 @@ pub fn seek_track_shared(app: &AppHandle, state: &State<AppState>, path: &str, t
 /// 获取播放状态
 pub fn get_status(state: &State<AppState>) -> Result<PlaybackStatus, String> {
     let volume = *state.player.target_volume.lock().unwrap();
-    let is_playing = if *state.player.exclusive_mode.lock().unwrap() {
-        state.player.wasapi_player.lock().unwrap().as_ref().map_or(false, |wasapi| wasapi.get_state() == PlaybackState::Playing)
-    } else {
-        !state.player.sink.lock().unwrap().is_paused()
+    let is_playing = {
+        let exclusive_mode = *state.player.exclusive_mode.lock().unwrap();
+        if exclusive_mode {
+            #[cfg(windows)]
+            {
+                state.player.wasapi_player.lock().unwrap().as_ref().map_or(false, |wasapi| wasapi.get_state() == PlaybackState::Playing)
+            }
+            #[cfg(not(windows))]
+            {
+                false
+            }
+        } else {
+            !state.player.sink.lock().unwrap().is_paused()
+        }
     };
     Ok(PlaybackStatus::new(is_playing, 0.0, volume))
 }
 
 /// 检查音轨是否播放完毕
 pub fn check_track_finished(state: &State<AppState>) -> Result<bool, String> {
-    if *state.player.exclusive_mode.lock().unwrap() {
-        Ok(state.player.wasapi_player.lock().unwrap().as_ref().map_or(true, |wasapi| wasapi.get_state() == PlaybackState::Stopped))
+    let exclusive_mode = *state.player.exclusive_mode.lock().unwrap();
+    if exclusive_mode {
+        #[cfg(windows)]
+        {
+            Ok(state.player.wasapi_player.lock().unwrap().as_ref().map_or(true, |wasapi| wasapi.get_state() == PlaybackState::Stopped))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(false)
+        }
     } else {
         let sink = state.player.sink.lock().unwrap();
         Ok(sink.empty() && !sink.is_paused())

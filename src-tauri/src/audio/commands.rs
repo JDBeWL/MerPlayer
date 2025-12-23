@@ -7,7 +7,10 @@ use super::playback::{
     check_track_finished, get_status, play_track_exclusive, play_track_shared, seek_track_shared,
     PlaybackStatus,
 };
+
+#[cfg(windows)]
 use super::wasapi::WasapiExclusivePlayback;
+
 use crate::AppState;
 use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{OutputStream, Sink};
@@ -39,8 +42,11 @@ pub fn play_track(app: AppHandle, state: State<AppState>, path: String, position
 #[command]
 pub fn pause_track(state: State<AppState>) -> Result<(), String> {
     if *state.player.exclusive_mode.lock().unwrap() {
-        if let Some(ref wasapi) = *state.player.wasapi_player.lock().unwrap() {
-            wasapi.pause()?;
+        #[cfg(windows)]
+        {
+            if let Some(ref wasapi) = *state.player.wasapi_player.lock().unwrap() {
+                wasapi.pause()?;
+            }
         }
     } else {
         state.player.sink.lock().unwrap().pause();
@@ -51,8 +57,11 @@ pub fn pause_track(state: State<AppState>) -> Result<(), String> {
 #[command]
 pub fn resume_track(state: State<AppState>) -> Result<(), String> {
     if *state.player.exclusive_mode.lock().unwrap() {
-        if let Some(ref wasapi) = *state.player.wasapi_player.lock().unwrap() {
-            wasapi.resume()?;
+        #[cfg(windows)]
+        {
+            if let Some(ref wasapi) = *state.player.wasapi_player.lock().unwrap() {
+                wasapi.resume()?;
+            }
         }
     } else {
         state.player.sink.lock().unwrap().play();
@@ -67,8 +76,11 @@ pub fn set_volume(state: State<AppState>, volume: f32) -> Result<(), String> {
     }
     *state.player.target_volume.lock().unwrap() = volume;
     if *state.player.exclusive_mode.lock().unwrap() {
-        if let Some(ref wasapi) = *state.player.wasapi_player.lock().unwrap() {
-            wasapi.set_volume(volume)?;
+        #[cfg(windows)]
+        {
+            if let Some(ref wasapi) = *state.player.wasapi_player.lock().unwrap() {
+                wasapi.set_volume(volume)?;
+            }
         }
     } else {
         state.player.sink.lock().unwrap().set_volume(volume);
@@ -123,6 +135,7 @@ pub fn set_audio_device(
     }
 }
 
+#[cfg(windows)]
 fn switch_to_wasapi_exclusive(
     _app: &AppHandle,
     state: &State<AppState>,
@@ -157,6 +170,16 @@ fn switch_to_wasapi_exclusive(
             Err(format!("Failed to initialize WASAPI exclusive mode: {e}. The device may be in use by another application."))
         }
     }
+}
+
+#[cfg(not(windows))]
+fn switch_to_wasapi_exclusive(
+    _app: &AppHandle,
+    _state: &State<AppState>,
+    _device_name: &str,
+    _current_time: Option<f32>,
+) -> Result<(), String> {
+    Err("Exclusive mode is only supported on Windows".to_string())
 }
 
 fn switch_to_shared_mode(
@@ -248,13 +271,35 @@ pub fn get_current_audio_device(state: State<AppState>) -> Result<AudioDeviceInf
     let default_device_name = host.default_output_device().and_then(|d| d.name().ok());
 
     let is_default = default_device_name.is_some_and(|d_name| d_name == current_device_name);
-    let supports_exclusive_mode = super::wasapi::check_device_exclusive_support(Some(&current_device_name)).unwrap_or(false);
+    let supports_exclusive_mode = {
+        #[cfg(windows)]
+        {
+            super::wasapi::check_device_exclusive_support(Some(&current_device_name)).unwrap_or(false)
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    };
     let is_exclusive_mode = *state.player.exclusive_mode.lock().unwrap();
 
-    let audio_mode_status = if is_exclusive_mode && state.player.wasapi_player.lock().unwrap().is_some() {
-        "exclusive"
-    } else {
-        "standard"
+    let audio_mode_status = {
+        if is_exclusive_mode {
+            #[cfg(windows)]
+            {
+                if state.player.wasapi_player.lock().unwrap().is_some() {
+                    "exclusive"
+                } else {
+                    "standard"
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                "standard"
+            }
+        } else {
+            "standard"
+        }
     }
     .to_string();
 

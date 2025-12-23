@@ -125,6 +125,7 @@
     "defaultDevice": "Default",
     "exclusiveMode": "Exclusive Mode",
     "exclusiveModeDesc": "Use WASAPI exclusive mode for direct audio device access and best audio quality",
+    "exclusiveModePlatformNotSupported": "Exclusive mode is only supported on Windows. The current platform does not support this feature",
     "exclusiveModeWarning": "Other applications cannot use this audio device while enabled",
     "exclusiveModeStatus": {
       "exclusive": "Exclusive Mode",

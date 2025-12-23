@@ -7,7 +7,6 @@
 
 use music_player::{
     AppState, PlayerState, audio,
-    audio::WasapiExclusivePlayback,
     config,
     config::ConfigManager,
     equalizer,
@@ -15,10 +14,20 @@ use music_player::{
     media, system,
 };
 
+#[cfg(windows)]
+use music_player::audio::WasapiExclusivePlayback;
+
 use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{OutputStream, Sink};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
+
+/// 跨平台的播放器类型别名
+#[cfg(windows)]
+type PlatformPlayer = WasapiExclusivePlayback;
+#[cfg(not(windows))]
+#[derive(Debug)]
+struct Placeholder;
 
 fn main() {
     // 初始化 cpal host
@@ -47,10 +56,12 @@ fn main() {
     println!("Loaded exclusive mode from config: {exclusive_mode_enabled}");
 
     // 根据独占模式设置创建播放器
-    let (sink, wasapi_player) = if exclusive_mode_enabled {
-        create_exclusive_mode_player(&device_name)
-    } else {
-        create_shared_mode_player(&device)
+    let (sink, wasapi_player) = {
+        if exclusive_mode_enabled {
+            create_exclusive_mode_player(&device_name)
+        } else {
+            create_shared_mode_player(&device)
+        }
     };
 
     // 创建应用程序状态
@@ -62,11 +73,25 @@ fn main() {
             target_volume: Arc::new(Mutex::new(1.0)),
             current_device_name: Arc::new(Mutex::new(device_name)),
             exclusive_mode: Arc::new(Mutex::new(
-                exclusive_mode_enabled && wasapi_player.is_some(),
+                exclusive_mode_enabled && {
+                    #[cfg(windows)]
+                    { wasapi_player.is_some() }
+                    #[cfg(not(windows))]
+                    { false }
+                },
             )),
             waveform_data: Arc::new(Mutex::new(Vec::with_capacity(1024))),
             spectrum_data: Arc::new(Mutex::new(vec![0.0; 128])),
-            wasapi_player: Arc::new(Mutex::new(wasapi_player)),
+            wasapi_player: {
+                #[cfg(windows)]
+                {
+                    Arc::new(Mutex::new(wasapi_player))
+                }
+                #[cfg(not(windows))]
+                {
+                    Arc::new(Mutex::new(None))
+                }
+            },
             decode_thread_stop: Arc::new(AtomicBool::new(false)),
             decode_thread_id: Arc::new(AtomicU64::new(0)),
             equalizer: Arc::new(Mutex::new(Equalizer::new(48000, 2))),
@@ -128,6 +153,7 @@ fn main() {
             // 系统命令
             system::commands::get_system_info,
             system::commands::get_system_fonts,
+            system::commands::get_platform,
             // 音频设备命令
             audio::commands::get_audio_devices,
             audio::commands::set_audio_device,
@@ -152,7 +178,8 @@ fn main() {
 }
 
 /// 创建独占模式播放器
-fn create_exclusive_mode_player(device_name: &str) -> (Sink, Option<WasapiExclusivePlayback>) {
+#[cfg(windows)]
+fn create_exclusive_mode_player(device_name: &str) -> (Sink, Option<PlatformPlayer>) {
     println!("Starting in WASAPI exclusive mode");
 
     // 创建一个空的 rodio sink（使用默认设备，但不会实际使用）
@@ -178,8 +205,19 @@ fn create_exclusive_mode_player(device_name: &str) -> (Sink, Option<WasapiExclus
     }
 }
 
+/// 创建独占模式播放器（非 Windows 平台回退到共享模式）
+#[cfg(not(windows))]
+fn create_exclusive_mode_player(_device_name: &str) -> (Sink, Option<PlatformPlayer>) {
+    println!("Exclusive mode is only supported on Windows, falling back to shared mode");
+    let (_stream, stream_handle) =
+        OutputStream::try_default().expect("Failed to create default output stream");
+    Box::leak(Box::new(_stream));
+    let sink = Sink::try_new(&stream_handle).expect("Failed to create sink");
+    (sink, None)
+}
+
 /// 创建共享模式播放器
-fn create_shared_mode_player(device: &cpal::Device) -> (Sink, Option<WasapiExclusivePlayback>) {
+fn create_shared_mode_player(device: &cpal::Device) -> (Sink, Option<PlatformPlayer>) {
     println!("Starting in shared mode");
 
     // 从选定的设备创建音频输出流

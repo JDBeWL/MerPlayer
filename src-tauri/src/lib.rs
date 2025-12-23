@@ -9,7 +9,11 @@ pub mod error;
 pub mod media;
 pub mod system;
 
-use audio::{SymphoniaSource, WasapiExclusivePlayback};
+use audio::SymphoniaSource;
+
+#[cfg(windows)]
+use audio::WasapiExclusivePlayback;
+
 use config::ConfigManager;
 use equalizer::{Equalizer, GlobalEqualizer};
 
@@ -37,8 +41,12 @@ pub struct PlayerState {
     pub waveform_data: Arc<Mutex<Vec<f32>>>,
     /// 频谱数据（用于可视化）
     pub spectrum_data: Arc<Mutex<Vec<f32>>>,
-    /// WASAPI 独占模式播放器
+    /// WASAPI 独占模式播放器（仅 Windows）
+    #[cfg(windows)]
     pub wasapi_player: Arc<Mutex<Option<WasapiExclusivePlayback>>>,
+    /// 非 Windows 平台的占位字段
+    #[cfg(not(windows))]
+    pub wasapi_player: Arc<Mutex<Option<Placeholder>>>,
     /// 解码线程停止标志
     pub decode_thread_stop: Arc<AtomicBool>,
     /// 当前解码线程 ID（用于区分不同的播放会话）

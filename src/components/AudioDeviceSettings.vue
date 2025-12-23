@@ -39,7 +39,7 @@
     </div>
 
     <div class="audio-options">
-      <div class="option-item" @click="toggleExclusiveMode">
+      <div class="option-item" :class="{ 'disabled': !isWindowsPlatform }" @click="isWindowsPlatform && toggleExclusiveMode()">
         <div class="option-label">
           <span class="material-symbols-rounded">album</span>
           <div class="option-text">
@@ -54,20 +54,26 @@
           </div>
         </div>
         <div class="option-control">
-          <div class="switch" :class="{ 'active': useExclusiveMode, 'disabled': currentDevice && !currentDevice.supportsExclusiveMode }">
+          <div class="switch" :class="{ 'active': useExclusiveMode, 'disabled': !isWindowsPlatform || (currentDevice && !currentDevice.supportsExclusiveMode) }">
             <div class="switch-handle"></div>
           </div>
         </div>
       </div>
       
+      <!-- 平台不支持独占模式提示 -->
+      <div v-if="!isWindowsPlatform" class="capability-notice platform-notice">
+        <span class="material-symbols-rounded">desktop_windows</span>
+        <p>{{ $t('config.exclusiveModePlatformNotSupported') }}</p>
+      </div>
+
       <!-- 设备能力提示 -->
-      <div v-if="currentDevice && !currentDevice.supportsExclusiveMode && useExclusiveMode" class="capability-notice">
+      <div v-else-if="currentDevice && !currentDevice.supportsExclusiveMode && useExclusiveMode" class="capability-notice">
         <span class="material-symbols-rounded">info</span>
         <p>{{ $t('config.exclusiveModeNotSupported') }}</p>
       </div>
-      
+
       <!-- 低延迟模式说明 -->
-      <div v-if="useExclusiveMode" class="capability-notice">
+      <div v-if="isWindowsPlatform && useExclusiveMode" class="capability-notice">
         <span class="material-symbols-rounded">info</span>
         <p>{{ $t('config.exclusiveModeWarning') }}</p>
       </div>
@@ -107,7 +113,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { usePlayerStore } from '../stores/player';
 import { useConfigStore } from '../stores/config';
@@ -121,6 +127,12 @@ const currentDevice = ref(null);
 const loading = ref(false);
 const error = ref(null);
 const useExclusiveMode = ref(false);
+const currentPlatform = ref('unknown');
+
+// 平台检测
+const isWindowsPlatform = computed(() => {
+  return currentPlatform.value === 'windows';
+});
 
 // 获取音频设备列表
 const fetchAudioDevices = async () => {
@@ -167,19 +179,25 @@ const selectDevice = async (device) => {
 
 // 切换独占模式
 const toggleExclusiveMode = async () => {
+  // 在非 Windows 平台上阻止启用独占模式
+  if (!isWindowsPlatform.value && !useExclusiveMode.value) {
+    console.warn('Exclusive mode is only supported on Windows');
+    return;
+  }
+
   // 检查当前设备是否支持独占模式
   if (currentDevice.value && !currentDevice.value.supportsExclusiveMode && !useExclusiveMode.value) {
     // 尝试启用但不支持的设备，显示警告但仍然执行
     console.warn('Trying to enable exclusive mode on unsupported device');
   }
-  
+
   try {
-    await invoke('toggle_exclusive_mode', { 
+    await invoke('toggle_exclusive_mode', {
       enabled: !useExclusiveMode.value,
       currentTime: playerStore.currentTime,
     });
     useExclusiveMode.value = !useExclusiveMode.value;
-    
+
     // 重新获取当前设备信息以更新状态
     try {
       const updatedDevice = await invoke('get_current_audio_device');
@@ -189,7 +207,7 @@ const toggleExclusiveMode = async () => {
     }
   } catch (err) {
     const errorMessage = err.message || err.toString() || '';
-    
+
     // 检查是否是需要重启的提示
     if (errorMessage.includes('RESTART_REQUIRED')) {
       // 更新本地状态以反映配置已更改
@@ -210,6 +228,15 @@ const refreshDevices = () => {
 
 // 组件挂载时获取设备列表
 onMounted(async () => {
+  // 获取平台信息
+  try {
+    currentPlatform.value = await invoke('get_platform');
+    console.log('Detected platform:', currentPlatform.value);
+  } catch (err) {
+    console.error('Failed to detect platform:', err);
+    currentPlatform.value = 'unknown';
+  }
+
   // 尝试从后端加载独占模式状态，如果失败则使用配置中的值
   try {
     useExclusiveMode.value = await invoke('get_exclusive_mode') ?? configStore.audio?.exclusiveMode ?? false;
@@ -217,10 +244,10 @@ onMounted(async () => {
     console.warn('Failed to get exclusive mode from backend, using config value:', err);
     useExclusiveMode.value = configStore.audio?.exclusiveMode ?? false;
   }
-  
+
   // 获取音频设备时不重新加载配置，避免重置主题
   await fetchAudioDevices();
-  
+
   // 获取当前设备信息
   try {
     currentDevice.value = await invoke('get_current_audio_device');
@@ -356,6 +383,15 @@ watch(useExclusiveMode, (newValue) => {
   transition: background-color 0.2s ease;
 }
 
+.option-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.option-item.disabled:hover {
+  background-color: transparent;
+}
+
 .option-item:hover {
   background-color: var(--md-sys-color-surface-container);
 }
@@ -477,6 +513,15 @@ watch(useExclusiveMode, (newValue) => {
   font-size: 14px;
   background-color: var(--md-sys-color-tertiary-container);
   color: var(--md-sys-color-on-tertiary-container);
+}
+
+.capability-notice.platform-notice {
+  background-color: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.capability-notice.platform-notice .material-symbols-rounded {
+  font-size: 24px;
 }
 
 .capability-notice .material-symbols-rounded {

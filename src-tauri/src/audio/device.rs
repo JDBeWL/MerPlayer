@@ -44,10 +44,18 @@ pub fn get_all_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
 }
 
 fn check_wasapi_exclusive_support(device_name: &str) -> bool {
-    super::wasapi::check_device_exclusive_support(Some(device_name)).unwrap_or_else(|e| {
-        println!("Failed to check exclusive mode support for {device_name}: {e}");
+    #[cfg(windows)]
+    {
+        super::wasapi::check_device_exclusive_support(Some(device_name)).unwrap_or_else(|e| {
+            println!("Failed to check exclusive mode support for {device_name}: {e}");
+            false
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = device_name;
         false
-    })
+    }
 }
 
 /// 检测设备是否支持独占模式（使用 cpal）
