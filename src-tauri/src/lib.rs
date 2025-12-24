@@ -21,6 +21,10 @@ use rodio::Sink;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
+/// 非 Windows 平台的占位类型
+#[cfg(not(windows))]
+pub struct Placeholder;
+
 /// 播放器状态
 ///
 /// 包含音频播放所需的所有状态信息
@@ -68,7 +72,9 @@ pub struct AppState {
 }
 
 // 重新导出常用类型
-pub use audio::{AudioDeviceInfo, PlaybackState, PlaybackStatus, SymphoniaDecoder};
+pub use audio::{AudioDeviceInfo, PlaybackStatus, SymphoniaDecoder};
+#[cfg(windows)]
+pub use audio::PlaybackState;
 pub use config::AppConfig;
 pub use equalizer::EqSettings;
 pub use media::{Playlist, TrackMetadata};
