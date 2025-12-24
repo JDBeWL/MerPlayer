@@ -26,6 +26,10 @@ use std::sync::{Arc, Mutex};
 #[cfg(windows)]
 type PlatformPlayer = WasapiExclusivePlayback;
 #[cfg(not(windows))]
+type PlatformPlayer = Placeholder;
+
+/// 非 Windows 平台的占位类型
+#[cfg(not(windows))]
 #[derive(Debug)]
 struct Placeholder;
 
