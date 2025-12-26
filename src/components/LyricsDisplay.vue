@@ -96,7 +96,10 @@ export default {
         const lyricsComposable = useLyrics();
         logger.debug('lyricsComposable:', lyricsComposable);
         logger.debug('fetchAndSaveLyrics:', lyricsComposable.fetchAndSaveLyrics);
-        const { lyrics, loading, activeIndex, lyricsSource } = lyricsComposable;
+        const { lyrics, loading, lyricsSource } = lyricsComposable;
+        
+        // 本地高频 activeIndex，基于 visualTime 计算，避免滚动延迟
+        const activeIndex = ref(-1);
         
         // 是否有当前播放的曲目
         const hasCurrentTrack = computed(() => !!playerStore.currentTrack);
@@ -198,6 +201,34 @@ export default {
             const jump = newTime - oldTime;
             if (Math.abs(jump) > 1.5 || jump < -0.1) {
                 visualTime.value = newTime;
+            }
+        });
+
+        // 基于高频 visualTime 计算 activeIndex，实现即时滚动
+        watch(visualTime, (time) => {
+            if (!lyrics.value.length) {
+                if (activeIndex.value !== -1) activeIndex.value = -1;
+                return;
+            }
+            
+            // 应用歌词偏移
+            const offset = playerStore.lyricsOffset || 0;
+            const currentTime = time - offset;
+            
+            // 二分查找当前歌词索引
+            let l = 0, r = lyrics.value.length - 1, idx = -1;
+            while (l <= r) {
+                const mid = (l + r) >> 1;
+                if (lyrics.value[mid].time <= currentTime) {
+                    idx = mid;
+                    l = mid + 1;
+                } else {
+                    r = mid - 1;
+                }
+            }
+            
+            if (idx !== activeIndex.value) {
+                activeIndex.value = idx;
             }
         });
 

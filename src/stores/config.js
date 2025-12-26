@@ -233,6 +233,16 @@ export const useConfigStore = defineStore('config', {
       return this.saveConfigNow()
     }, 2000),
 
+    // 强制立即保存（取消防抖，用于应用关闭前）
+    async flushPendingSave() {
+      // 取消待执行的防抖保存
+      if (this.saveConfig.cancel) {
+        this.saveConfig.cancel()
+      }
+      // 立即保存
+      await this.saveConfigNow()
+    },
+
     async exportConfig(filePath) {
       try {
         const configToExport = JSON.parse(JSON.stringify(this._getSaveableConfig()))

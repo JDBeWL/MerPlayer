@@ -57,11 +57,15 @@ pub struct VisualizationSource<I: Source<Item = f32> + Send> {
     prev_spectrum: Vec<f32>,
     app_handle: Option<AppHandle>,
     last_emit_time: std::sync::atomic::AtomicU64,
+    last_fft_time: std::sync::atomic::AtomicU64,
     eq_settings: Arc<RwLock<EqSettings>>,
     eq_processor: EqProcessor,
     // 缓存的 EQ 设置，减少锁读取频率
     cached_eq_enabled: bool,
     eq_update_counter: u32,
+    // 预分配的 FFT 工作缓冲区
+    fft_buffer: Vec<f32>,
+    spectrum_buffer: Vec<f32>,
 }
 
 struct EqProcessor {
@@ -120,14 +124,17 @@ impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
             input,
             waveform_data,
             spectrum_data,
-            buffer: Vec::with_capacity(1024),
+            buffer: Vec::with_capacity(2048),
             prev_spectrum: vec![0.0; 128],
             app_handle,
             last_emit_time: std::sync::atomic::AtomicU64::new(0),
+            last_fft_time: std::sync::atomic::AtomicU64::new(0),
             eq_settings: Arc::new(RwLock::new(EqSettings::default())),
             eq_processor: EqProcessor::new(sr, ch),
             cached_eq_enabled: false,
             eq_update_counter: 0,
+            fft_buffer: vec![0.0; 2048],
+            spectrum_buffer: vec![0.0; 128],
         }
     }
 
@@ -182,34 +189,80 @@ impl<I: Source<Item = f32> + Send> Iterator for VisualizationSource<I> {
         };
 
         self.buffer.push(processed);
-        if self.buffer.len() >= 1024 {
-            if let Ok(mut spec) = self.spectrum_data.try_lock() {
-                let hann = hann_window(&self.buffer);
-                if let Ok(spectrum) = samples_fft_to_spectrum(&hann, self.input.sample_rate(), FrequencyLimit::Range(20.0, 20000.0), Some(&divide_by_N_sqrt)) {
-                    let mut new_spec = vec![0.0; 128];
-                    let (log_min, log_max) = (180.0_f32.log10(), 20000.0_f32.log10());
-                    let log_step = (log_max - log_min) / 128.0;
-                    for (freq, value) in spectrum.data() {
-                        let f = freq.val();
-                        if (180.0..=20000.0).contains(&f) {
-                            let bin = ((f.log10() - log_min) / log_step).floor() as usize;
-                            if bin < 128 && value.val() > new_spec[bin] { new_spec[bin] = value.val(); }
+        if self.buffer.len() >= 2048 {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+            let last_fft = self.last_fft_time.load(Ordering::Relaxed);
+            
+            // 限制 FFT 计算频率为约 60fps (16ms)
+            if now - last_fft >= 16 {
+                self.last_fft_time.store(now, Ordering::Relaxed);
+                
+                if let Ok(mut spec) = self.spectrum_data.try_lock() {
+                    // 复用预分配的缓冲区
+                    self.fft_buffer.copy_from_slice(&self.buffer[..2048]);
+                    let hann = hann_window(&self.fft_buffer);
+                    
+                    if let Ok(spectrum) = samples_fft_to_spectrum(&hann, self.input.sample_rate(), FrequencyLimit::Range(20.0, 20000.0), Some(&divide_by_N_sqrt)) {
+                        // 重置频谱缓冲区
+                        self.spectrum_buffer.fill(0.0);
+                        
+                        // AE 风格：线性频率分布，每个 bin 覆盖相等的频率范围
+                        let num_bins = 128;
+                        let freq_min = 20.0_f32;
+                        let freq_max = 16000.0_f32; // 人耳敏感范围
+                        let freq_step = (freq_max - freq_min) / num_bins as f32;
+                        
+                        let mut bin_counts = [0u32; 128];
+                        
+                        for (freq, value) in spectrum.data() {
+                            let f = freq.val();
+                            if f < freq_min || f > freq_max { continue; }
+                            
+                            // 线性映射
+                            let bin = ((f - freq_min) / freq_step).floor() as usize;
+                            let bin = bin.min(num_bins - 1);
+                            
+                            // 取该 bin 内的最大值（峰值检测）
+                            let v = value.val();
+                            if v > self.spectrum_buffer[bin] {
+                                self.spectrum_buffer[bin] = v;
+                            }
+                            bin_counts[bin] += 1;
                         }
+                        
+                        // AE 风格的平滑：快速上升，缓慢下降（峰值保持）
+                        for i in 0..128 {
+                            let target = self.spectrum_buffer[i];
+                            let current = self.prev_spectrum[i];
+                            
+                            if target > current {
+                                // 快速上升
+                                self.prev_spectrum[i] = current * 0.3 + target * 0.7;
+                            } else {
+                                // 缓慢下降（重力感）
+                                self.prev_spectrum[i] = current * 0.85 + target * 0.15;
+                            }
+                        }
+                        
+                        // 直接复制到共享数据，避免 clone
+                        spec.clear();
+                        spec.extend_from_slice(&self.prev_spectrum);
                     }
-                    for i in 0..128 { self.prev_spectrum[i] = self.prev_spectrum[i] * 0.5 + new_spec[i] * 0.5; }
-                    *spec = self.prev_spectrum.clone();
+                }
+                
+                // 发送事件（限制在 16ms 一次）
+                if let Some(ref app) = self.app_handle {
+                    let last_emit = self.last_emit_time.load(Ordering::Relaxed);
+                    if now - last_emit >= 16 {
+                        let _ = emit_spectrum_update(app, &self.prev_spectrum);
+                        self.last_emit_time.store(now, Ordering::Relaxed);
+                    }
                 }
             }
-            if let Ok(mut wave) = self.waveform_data.try_lock() { *wave = self.buffer.clone(); }
-            if let Some(ref app) = self.app_handle {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-                let last = self.last_emit_time.load(Ordering::Relaxed);
-                if now - last >= 16 && self.spectrum_data.try_lock().is_ok() {
-                    let _ = emit_spectrum_update(app, &self.prev_spectrum);
-                    self.last_emit_time.store(now, Ordering::Relaxed);
-                }
-            }
-            self.buffer.clear();
+            
+            // 保留后半部分数据用于重叠分析，提高平滑度
+            let half = self.buffer.len() / 2;
+            self.buffer.drain(..half);
         }
         Some(processed)
     }

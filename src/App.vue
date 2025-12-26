@@ -432,7 +432,15 @@ watch(currentTrackIndex, (newIndex, oldIndex) => {
   }
 });
 
+// 应用关闭前强制保存配置
+const handleBeforeUnload = async () => {
+  await configStore.flushPendingSave()
+}
+
 onMounted(async () => {
+  // 注册 beforeunload 事件，确保关闭前保存配置
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  
   // 加载配置文件
   try {
     await configStore.loadConfig()
@@ -476,7 +484,11 @@ onMounted(async () => {
   document.addEventListener('keydown', handleKeyDown)
 })
 
-onUnmounted(() => {
+onUnmounted(async () => {
+  // 强制保存待处理的配置
+  await configStore.flushPendingSave()
+  // 移除 beforeunload 事件监听器
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   // 清理键盘事件监听器
   document.removeEventListener('keydown', handleKeyDown)
   // 清理错误通知监听器
@@ -485,6 +497,8 @@ onUnmounted(() => {
   if (stopWatchTrack) {
     stopWatchTrack()
   }
+  // 清理播放器资源
+  playerStore.cleanup()
 })
 </script>
 

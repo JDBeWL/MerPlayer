@@ -307,28 +307,32 @@ canvas {
 }
 
 .single-line-lyrics {
-  flex: 0;
-  min-height: 100px;
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-end;
   text-align: right;
-  /* padding: 8px; */
+  overflow: hidden;
 }
 
 .lyric-content {
   display: flex;
   flex-direction: column;
-  /* gap: 4px; */
   width: 100%;
+  gap: 8px;
 }
 
 .lyric-original {
   font-size: 36px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--md-sys-color-primary);
   line-height: 1.3;
   transition: all 0.3s ease;
+  /* 限制最多显示2行 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* LRC字幕颜色 */
@@ -342,10 +346,15 @@ canvas {
 }
 
 .lyric-translation {
-  font-size: 32px;
+  font-size: 30px;
   color: var(--md-sys-color-primary);
-  font-weight: 400;
-  margin-top: 8px;
+  font-weight: 500;
+  opacity: 0.7;
+  /* 限制最多显示2行 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .karaoke-word {

@@ -256,13 +256,13 @@ class PluginManager {
   }
 
   /**
-   * 插件存储 - 带持久化
+   * 插件存储 - 带持久化和大小限制
    */
   getStorage(pluginId) {
     if (!this.storage.has(pluginId)) {
-      // 从 localStorage 加载已保存的数据
       const storageKey = STORAGE_PREFIX + pluginId
       let savedData = {}
+      
       try {
         const saved = localStorage.getItem(storageKey)
         if (saved) {
@@ -272,28 +272,60 @@ class PluginManager {
         logger.warn(`加载插件 ${pluginId} 存储失败:`, e)
       }
       
-      // 创建响应式代理，自动保存变更
       const storage = reactive(savedData)
+      const maxStorageSize = 1024 * 1024 // 每个插件最多 1MB
       
-      // 使用 Proxy 拦截写入操作，自动持久化
+      // 安全保存函数，带大小检查
+      const safeSave = (target) => {
+        try {
+          const json = JSON.stringify(target)
+          if (json.length > maxStorageSize) {
+            logger.warn(`插件 ${pluginId} 存储超过限制 (${(json.length / 1024).toFixed(1)}KB > 1MB)，将清理旧数据`)
+            // 如果是数组类型的数据，保留最新的一半
+            for (const key of Object.keys(target)) {
+              if (Array.isArray(target[key]) && target[key].length > 10) {
+                target[key] = target[key].slice(-Math.floor(target[key].length / 2))
+              }
+            }
+          }
+          localStorage.setItem(storageKey, JSON.stringify(target))
+        } catch (e) {
+          if (e.name === 'QuotaExceededError') {
+            logger.error(`插件 ${pluginId} 存储空间不足，清理数据`)
+            // 清理所有数组数据
+            for (const key of Object.keys(target)) {
+              if (Array.isArray(target[key])) {
+                target[key] = target[key].slice(-10) // 只保留最新10条
+              }
+            }
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(target))
+            } catch {
+              // 如果还是失败，清空存储
+              localStorage.removeItem(storageKey)
+            }
+          } else {
+            logger.warn(`保存插件 ${pluginId} 存储失败:`, e)
+          }
+        }
+      }
+      
+      // 使用防抖保存，避免频繁写入
+      let saveTimeout = null
+      const debouncedSave = (target) => {
+        if (saveTimeout) clearTimeout(saveTimeout)
+        saveTimeout = setTimeout(() => safeSave(target), 500)
+      }
+      
       const persistentStorage = new Proxy(storage, {
         set(target, key, value) {
           target[key] = value
-          // 异步保存到 localStorage
-          try {
-            localStorage.setItem(storageKey, JSON.stringify(target))
-          } catch (e) {
-            logger.warn(`保存插件 ${pluginId} 存储失败:`, e)
-          }
+          debouncedSave(target)
           return true
         },
         deleteProperty(target, key) {
           delete target[key]
-          try {
-            localStorage.setItem(storageKey, JSON.stringify(target))
-          } catch (e) {
-            logger.warn(`保存插件 ${pluginId} 存储失败:`, e)
-          }
+          debouncedSave(target)
           return true
         }
       })
