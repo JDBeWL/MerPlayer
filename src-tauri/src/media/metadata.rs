@@ -6,6 +6,7 @@ use base64::{engine::general_purpose, Engine as _};
 use lofty::prelude::{Accessor, AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
 use serde::Serialize;
+use std::fs;
 use std::path::Path;
 
 /// 单个音轨的元数据
@@ -148,4 +149,56 @@ pub fn get_track_metadata_internal(path: &str) -> Result<TrackMetadata, String> 
     }
 
     Ok(metadata)
+}
+
+
+/// 提取音频文件的封面并保存到指定路径
+pub fn extract_cover_internal(audio_path: &str, output_path: &str) -> Result<String, String> {
+    let file_path = Path::new(audio_path);
+
+    let tagged_file = Probe::open(file_path)
+        .map_err(|e| format!("无法打开文件: {}", e))?
+        .read()
+        .map_err(|e| format!("无法读取文件: {}", e))?;
+
+    let tag = tagged_file
+        .primary_tag()
+        .ok_or_else(|| "文件没有标签信息".to_string())?;
+
+    let picture = tag
+        .pictures()
+        .first()
+        .ok_or_else(|| "文件没有封面图片".to_string())?;
+
+    let data = picture.data();
+    
+    // 根据 MIME 类型确定文件扩展名
+    let extension = match picture.mime_type().map(|m| m.as_str()) {
+        Some("image/png") => "png",
+        Some("image/gif") => "gif",
+        Some("image/webp") => "webp",
+        Some("image/bmp") => "bmp",
+        _ => "jpg", // 默认为 jpg
+    };
+
+    // 处理输出路径
+    let output = Path::new(output_path);
+    let final_path = if output.extension().is_none() {
+        // 如果没有扩展名，添加正确的扩展名
+        output.with_extension(extension)
+    } else {
+        output.to_path_buf()
+    };
+
+    // 确保父目录存在
+    if let Some(parent) = final_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("无法创建目录: {}", e))?;
+    }
+
+    // 写入文件
+    fs::write(&final_path, data)
+        .map_err(|e| format!("无法写入文件: {}", e))?;
+
+    Ok(final_path.to_string_lossy().to_string())
 }

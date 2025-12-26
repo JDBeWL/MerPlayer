@@ -16,7 +16,11 @@
     "musicName": "Waiting for lyrics...",
     "bitrate": "{value}kbps",
     "sampleRate": "{value}kHz",
-    "channels": "{value} channel | {value} channels"
+    "channels": "{value} channel | {value} channels",
+    "extractCover": "Extract Cover",
+    "extractCoverSuccess": "Cover saved",
+    "extractCoverFailed": "Failed to extract cover",
+    "noCover": "No cover"
   },
   "controls": {
     "play": "Play",

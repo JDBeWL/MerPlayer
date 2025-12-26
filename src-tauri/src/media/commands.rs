@@ -6,7 +6,7 @@ use super::filesystem::{
     check_file_exists_internal, get_all_audio_files_from_dirs, get_audio_files_from_dir, read_dir,
     read_lyrics_file_internal, write_lyrics_file_internal,
 };
-use super::metadata::{Playlist, TrackMetadata, get_track_metadata_internal};
+use super::metadata::{Playlist, TrackMetadata, get_track_metadata_internal, extract_cover_internal};
 use super::netease;
 use crate::AppState;
 use tauri::{State, command};
@@ -81,4 +81,11 @@ pub async fn netease_search_songs(
 #[command]
 pub async fn netease_get_lyrics(song_id: String) -> Result<netease::LyricsData, String> {
     netease::get_lyrics(&song_id).await
+}
+
+
+/// 提取音频文件的封面并保存到指定路径
+#[command]
+pub fn extract_cover(audio_path: String, output_path: String) -> Result<String, String> {
+    extract_cover_internal(&audio_path, &output_path)
 }

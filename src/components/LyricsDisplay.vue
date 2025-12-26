@@ -451,7 +451,8 @@ export default {
     right: 16px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
+    gap: 8px;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -469,6 +470,7 @@ export default {
     background-color: var(--md-sys-color-surface-container);
     border-radius: 20px;
     pointer-events: auto;
+    margin-right: auto;
 }
 
 .action-btn {

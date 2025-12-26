@@ -56,6 +56,15 @@
                           <span class="material-symbols-rounded">album</span>
                         </div>
                       </div>
+                      <!-- 提取封面按钮 -->
+                      <button 
+                        v-if="currentTrack && currentTrack.cover" 
+                        class="extract-cover-btn"
+                        @click="extractCover"
+                        :title="$t('player.extractCover')"
+                      >
+                        <span class="material-symbols-rounded">download</span>
+                      </button>
                     </div>
                   </Transition>
                 </div>
@@ -164,6 +173,8 @@ import { usePlayerStore } from './stores/player'
 import { useThemeStore } from './stores/theme'
 import { useConfigStore } from './stores/config'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
+import { save } from '@tauri-apps/plugin-dialog'
 import logger from './utils/logger'
 import { useErrorNotification } from './composables/useErrorNotification'
 import PlayerControls from './components/PlayerControls.vue'
@@ -177,10 +188,12 @@ import Settings from './components/Settings.vue'
 import MiniPlayer from './components/MiniPlayer.vue'
 import { useTrackInfo } from './composables/useTrackInfo'
 import { useLyrics } from './composables/useLyrics'
+import { useI18n } from 'vue-i18n'
 
 const playerStore = usePlayerStore()
 const themeStore = useThemeStore()
 const configStore = useConfigStore()
+const { t } = useI18n()
 
 // 初始化错误通知
 const { errorNotifications, removeError, unsubscribe: unsubscribeErrorNotification } = useErrorNotification()
@@ -204,6 +217,40 @@ const viewMode = ref('lyrics') // 'lyrics' or 'visualizer'
 
 const toggleViewMode = () => {
   viewMode.value = viewMode.value === 'lyrics' ? 'visualizer' : 'lyrics'
+}
+
+// 提取封面功能
+const extractCover = async () => {
+  if (!currentTrack.value || !currentTrack.value.path) return
+  
+  try {
+    // 获取默认文件名（基于音频文件名）
+    const audioPath = currentTrack.value.path
+    const baseName = audioPath.replace(/\.[^/.]+$/, '') // 移除扩展名
+    const defaultName = baseName.split(/[/\\]/).pop() + '_cover'
+    
+    // 打开保存对话框
+    const savePath = await save({
+      defaultPath: defaultName,
+      filters: [{
+        name: 'Image',
+        extensions: ['jpg', 'png', 'webp']
+      }]
+    })
+    
+    if (!savePath) return // 用户取消
+    
+    // 调用后端提取封面
+    const result = await invoke('extract_cover', {
+      audioPath: audioPath,
+      outputPath: savePath
+    })
+    
+    logger.info('Cover extracted to:', result)
+    // 可以添加成功提示
+  } catch (error) {
+    logger.error('Failed to extract cover:', error)
+  }
 }
 
 
@@ -675,6 +722,40 @@ onUnmounted(() => {
 
 .album-art:hover {
   transform: scale(1.02);
+}
+
+/* 提取封面按钮 */
+.extract-cover-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.album-art-wrapper:hover .extract-cover-btn {
+  opacity: 1;
+}
+
+.extract-cover-btn:hover {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  transform: scale(1.1);
+}
+
+.extract-cover-btn .material-symbols-rounded {
+  font-size: 20px;
 }
 
 .album-art-placeholder {

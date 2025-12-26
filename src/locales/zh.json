@@ -16,7 +16,11 @@
     "musicName": "等待歌词...",
     "bitrate": "{value}kbps",
     "sampleRate": "{value}kHz",
-    "channels": "{value} 声道"
+    "channels": "{value} 声道",
+    "extractCover": "提取封面",
+    "extractCoverSuccess": "封面已保存",
+    "extractCoverFailed": "提取封面失败",
+    "noCover": "没有封面"
   },
   "controls": {
     "play": "播放",

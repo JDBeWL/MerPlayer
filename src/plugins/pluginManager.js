@@ -8,6 +8,9 @@ import logger from '../utils/logger'
 import { createPluginAPI } from './pluginAPI'
 import { createPluginSandbox } from './pluginSandbox'
 
+// 插件存储的 localStorage key 前缀
+const STORAGE_PREFIX = 'mercurial-plugin-storage-'
+
 // 插件状态
 export const PluginState = {
   INACTIVE: 'inactive',
@@ -163,11 +166,23 @@ class PluginManager {
   /**
    * 卸载插件
    * @param {string} pluginId 插件 ID
+   * @param {boolean} clearStorage 是否清除存储数据，默认 false
    */
-  async uninstall(pluginId) {
+  async uninstall(pluginId, clearStorage = false) {
     await this.deactivate(pluginId)
     this.plugins.delete(pluginId)
     this.storage.delete(pluginId)
+    
+    // 如果需要清除存储数据
+    if (clearStorage) {
+      try {
+        localStorage.removeItem(STORAGE_PREFIX + pluginId)
+        logger.info(`插件存储已清除: ${pluginId}`)
+      } catch (e) {
+        logger.warn(`清除插件存储失败: ${pluginId}`, e)
+      }
+    }
+    
     logger.info(`插件已卸载: ${pluginId}`)
     this.emit('plugin:uninstalled', { pluginId })
   }
@@ -241,11 +256,49 @@ class PluginManager {
   }
 
   /**
-   * 插件存储
+   * 插件存储 - 带持久化
    */
   getStorage(pluginId) {
     if (!this.storage.has(pluginId)) {
-      this.storage.set(pluginId, reactive({}))
+      // 从 localStorage 加载已保存的数据
+      const storageKey = STORAGE_PREFIX + pluginId
+      let savedData = {}
+      try {
+        const saved = localStorage.getItem(storageKey)
+        if (saved) {
+          savedData = JSON.parse(saved)
+        }
+      } catch (e) {
+        logger.warn(`加载插件 ${pluginId} 存储失败:`, e)
+      }
+      
+      // 创建响应式代理，自动保存变更
+      const storage = reactive(savedData)
+      
+      // 使用 Proxy 拦截写入操作，自动持久化
+      const persistentStorage = new Proxy(storage, {
+        set(target, key, value) {
+          target[key] = value
+          // 异步保存到 localStorage
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(target))
+          } catch (e) {
+            logger.warn(`保存插件 ${pluginId} 存储失败:`, e)
+          }
+          return true
+        },
+        deleteProperty(target, key) {
+          delete target[key]
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(target))
+          } catch (e) {
+            logger.warn(`保存插件 ${pluginId} 存储失败:`, e)
+          }
+          return true
+        }
+      })
+      
+      this.storage.set(pluginId, persistentStorage)
     }
     return this.storage.get(pluginId)
   }
