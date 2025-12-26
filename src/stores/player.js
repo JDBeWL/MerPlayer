@@ -343,7 +343,7 @@ export const usePlayerStore = defineStore('player', {
         
         const playPromise = invoke('play_track', { path: track.path });
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('播放超时')), 10000);
+          setTimeout(() => reject(new Error('播放超时')), 5000);
         });
 
         const result = await handlePromise(

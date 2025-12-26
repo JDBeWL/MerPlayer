@@ -110,6 +110,9 @@ const generateImage = async (options = {}) => {
     }
   }
 
+  // 让出主线程，避免长时间阻塞
+  await new Promise(resolve => setTimeout(resolve, 0))
+
   // 计算歌词需要的行数来决定高度
   const tempCanvas = api.utils.createCanvas(width, 100)
   const tempCtx = tempCanvas.ctx
@@ -181,69 +184,64 @@ const generateImage = async (options = {}) => {
   ctx.fillStyle = bgColor
   ctx.fillRect(0, 0, width, height)
 
-  // 绘制封面背景（模糊效果）
-  if (config.showCover && state.currentTrack.cover) {
-    try {
-      const coverImg = await api.utils.loadImage(state.currentTrack.cover)
-      
-      // 绘制模糊背景
-      ctx.save()
-      ctx.globalAlpha = config.coverOpacity
-      ctx.filter = `blur(${config.coverBlur}px)`
-      
-      // 计算覆盖整个画布的尺寸
-      const scale = Math.max(width / coverImg.width, height / coverImg.height) * 1.2
-      const scaledW = coverImg.width * scale
-      const scaledH = coverImg.height * scale
-      const offsetX = (width - scaledW) / 2
-      const offsetY = (height - scaledH) / 2
-      
-      ctx.drawImage(coverImg, offsetX, offsetY, scaledW, scaledH)
-      ctx.restore()
+  // 让出主线程
+  await new Promise(resolve => setTimeout(resolve, 0))
 
-      // 添加渐变遮罩
-      const gradient = ctx.createLinearGradient(0, 0, 0, height)
-      gradient.addColorStop(0, isDark ? 'rgba(18,18,18,0.7)' : 'rgba(254,254,254,0.7)')
-      gradient.addColorStop(0.5, isDark ? 'rgba(18,18,18,0.5)' : 'rgba(254,254,254,0.5)')
-      gradient.addColorStop(1, isDark ? 'rgba(18,18,18,0.9)' : 'rgba(254,254,254,0.9)')
-      ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, width, height)
+  // 预加载封面图片（只加载一次）
+  let coverImg = null
+  if (state.currentTrack.cover) {
+    try {
+      coverImg = await api.utils.loadImage(state.currentTrack.cover)
     } catch (e) {
       api.log.debug('封面加载失败:', e)
     }
   }
 
+  // 绘制封面背景（模糊效果）
+  if (config.showCover && coverImg) {
+    // 绘制模糊背景
+    ctx.save()
+    ctx.globalAlpha = config.coverOpacity
+    ctx.filter = `blur(${config.coverBlur}px)`
+    
+    // 计算覆盖整个画布的尺寸
+    const scale = Math.max(width / coverImg.width, height / coverImg.height) * 1.2
+    const scaledW = coverImg.width * scale
+    const scaledH = coverImg.height * scale
+    const offsetX = (width - scaledW) / 2
+    const offsetY = (height - scaledH) / 2
+    
+    ctx.drawImage(coverImg, offsetX, offsetY, scaledW, scaledH)
+    ctx.restore()
+
+    // 添加渐变遮罩
+    const gradient = ctx.createLinearGradient(0, 0, 0, height)
+    gradient.addColorStop(0, isDark ? 'rgba(18,18,18,0.7)' : 'rgba(254,254,254,0.7)')
+    gradient.addColorStop(0.5, isDark ? 'rgba(18,18,18,0.5)' : 'rgba(254,254,254,0.5)')
+    gradient.addColorStop(1, isDark ? 'rgba(18,18,18,0.9)' : 'rgba(254,254,254,0.9)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, width, height)
+  }
+
+  // 让出主线程
+  await new Promise(resolve => setTimeout(resolve, 0))
+
   // 绘制封面图片（居中显示）
   const coverX = (width - coverSize) / 2
   const coverY = padding + 60
 
-  if (state.currentTrack.cover) {
-    try {
-      const coverImg = await api.utils.loadImage(state.currentTrack.cover)
-      
-      // 绘制阴影
-      ctx.save()
-      ctx.shadowColor = 'rgba(0,0,0,0.3)'
-      ctx.shadowBlur = 30
-      ctx.shadowOffsetY = 10
-      
-      // 圆角封面
-      roundRect(ctx, coverX, coverY, coverSize, coverSize, 24)
-      ctx.clip()
-      ctx.drawImage(coverImg, coverX, coverY, coverSize, coverSize)
-      ctx.restore()
-    } catch (e) {
-      // 绘制占位符
-      ctx.fillStyle = surfaceContainer
-      roundRect(ctx, coverX, coverY, coverSize, coverSize, 24)
-      ctx.fill()
-      
-      ctx.fillStyle = onSurfaceVariant
-      ctx.font = `${coverSize / 3}px ${config.fontFamily}`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('♪', coverX + coverSize / 2, coverY + coverSize / 2)
-    }
+  if (coverImg) {
+    // 绘制阴影
+    ctx.save()
+    ctx.shadowColor = 'rgba(0,0,0,0.3)'
+    ctx.shadowBlur = 30
+    ctx.shadowOffsetY = 10
+    
+    // 圆角封面
+    roundRect(ctx, coverX, coverY, coverSize, coverSize, 24)
+    ctx.clip()
+    ctx.drawImage(coverImg, coverX, coverY, coverSize, coverSize)
+    ctx.restore()
   } else {
     // 无封面占位符
     ctx.fillStyle = surfaceContainer
@@ -357,6 +355,9 @@ const generateImage = async (options = {}) => {
   return canvas
 }
 
+// 防抖标志，防止重复执行导致页面冻结
+let isGenerating = false
+
 // 插件主体
 const plugin = {
   activate() {
@@ -411,7 +412,17 @@ const plugin = {
    * 生成并保存图片
    */
   async saveImage(options = {}) {
+    // 防止重复执行导致页面冻结
+    if (isGenerating) {
+      api.log.warn('图片正在生成中，请稍候...')
+      return null
+    }
+    
+    isGenerating = true
     try {
+      // 使用 setTimeout 让 UI 有机会更新
+      await new Promise(resolve => setTimeout(resolve, 10))
+      
       const canvas = await generateImage(options)
       if (!canvas) return null
 
@@ -432,6 +443,8 @@ const plugin = {
       api.log.error('保存图片失败:', error)
       api.ui.showNotification('保存失败: ' + error.message, 'error')
       return null
+    } finally {
+      isGenerating = false
     }
   },
 
@@ -439,7 +452,17 @@ const plugin = {
    * 生成并复制到剪贴板
    */
   async copyImage(options = {}) {
+    // 防止重复执行导致页面冻结
+    if (isGenerating) {
+      api.log.warn('图片正在生成中，请稍候...')
+      return false
+    }
+    
+    isGenerating = true
     try {
+      // 使用 setTimeout 让 UI 有机会更新
+      await new Promise(resolve => setTimeout(resolve, 10))
+      
       const canvas = await generateImage(options)
       if (!canvas) return false
 
@@ -450,6 +473,8 @@ const plugin = {
       api.log.error('复制图片失败:', error)
       api.ui.showNotification('复制失败: ' + error.message, 'error')
       return false
+    } finally {
+      isGenerating = false
     }
   },
 

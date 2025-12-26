@@ -70,12 +70,11 @@ class PluginManager {
     
     const playerStore = usePlayerStore()
     
-    // 监听播放器状态变化
+    // 只监听歌曲和播放状态变化，不监听 currentTime（避免频繁触发）
     this._playerWatcherStop = watch(
       () => ({
         track: playerStore.currentTrack,
         isPlaying: playerStore.isPlaying,
-        currentTime: playerStore.currentTime,
       }),
       (newState, oldState) => {
         const newTrackPath = newState.track?.path
