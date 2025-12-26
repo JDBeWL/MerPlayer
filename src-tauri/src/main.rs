@@ -184,6 +184,8 @@ fn main() {
             plugins::commands::uninstall_plugin,
             plugins::commands::get_plugins_directory,
             plugins::commands::open_plugins_directory,
+            plugins::commands::save_screenshot,
+            plugins::commands::open_screenshots_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

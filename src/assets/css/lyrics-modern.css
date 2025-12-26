@@ -50,7 +50,7 @@
     color: var(--md-sys-color-primary, #fff);
     opacity: 1;
     filter: blur(0px);
-    font-size: 36px;
+    /* font-size: 36px; */
     transform: scale(1.05);
     /* 放大 */
     text-shadow: 0 0 15px rgba(255, 255, 255, 0.15);
@@ -70,7 +70,7 @@
 }
 
 .lyrics-style-modern .translation {
-    font-size: 24px;
+    font-size: 28px;
     font-weight: 400;
     opacity: 0.7;
     margin-top: 2px;

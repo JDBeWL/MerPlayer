@@ -217,7 +217,198 @@ const response = await api.network.fetch('https://api.example.com/data', {
 const data = await response.json()
 ```
 
+### 主题 (api.theme)
+
+```javascript
+// 获取当前主题信息
+const theme = await api.theme.getCurrent()
+// theme: { preference, isDark, primaryColor }
+
+// 获取单个 CSS 变量
+const primaryColor = api.theme.getCSSVariable('md-sys-color-primary')
+
+// 获取所有主题颜色
+const colors = api.theme.getAllColors()
+// colors: { mdSysColorPrimary, mdSysColorOnPrimary, mdSysColorBackground, ... }
+
+// 设置插件自定义颜色（会添加 --plugin-{pluginId}- 前缀）
+await api.theme.setColors({ accent: '#ff0000' })
+```
+
+### 工具 (api.utils)
+
+```javascript
+// 创建 Canvas
+const { canvas, ctx } = api.utils.createCanvas(800, 600)
+
+// Canvas 转 Blob
+const blob = await api.utils.canvasToBlob(canvas, 'image/png')
+
+// Canvas 转 DataURL (base64)
+const dataURL = api.utils.canvasToDataURL(canvas, 'image/jpeg', 0.9)
+
+// 加载图片
+const img = await api.utils.loadImage('https://example.com/image.png')
+ctx.drawImage(img, 0, 0)
+
+// DataURL 转 Blob
+const blob2 = api.utils.dataURLToBlob(dataURL)
+
+// 格式化时间
+api.utils.formatTime(125)  // '2:05'
+api.utils.formatTime(3725) // '1:02:05'
+
+// 生成唯一 ID
+const id = api.utils.generateId()
+```
+
+### 文件 (api.file)
+
+```javascript
+// 保存文件（弹出保存对话框）
+const filePath = await api.file.saveAs(blob, {
+  defaultName: 'export.json',
+  filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+  title: '导出数据'
+})
+
+// 保存图片（便捷方法）
+const imagePath = await api.file.saveImage(canvas, 'screenshot.png', 'png')
+// 支持格式: 'png', 'jpeg', 'webp'
+```
+
+### 剪贴板 (api.clipboard)
+
+```javascript
+// 复制图片到剪贴板
+await api.clipboard.writeImage(canvas)  // 支持 Canvas、Blob、DataURL
+
+// 复制文本到剪贴板
+await api.clipboard.writeText('Hello World')
+```
+
+### 快捷键 (api.shortcuts)
+
+```javascript
+// 注册快捷键
+api.shortcuts.register({
+  id: 'my-shortcut',
+  name: '我的快捷键',
+  key: 'Ctrl+Shift+M',  // 支持 Ctrl, Alt, Shift, Meta 组合
+  description: '执行某个操作',
+  action: () => {
+    // 快捷键触发时执行
+    api.log.info('快捷键被触发!')
+  }
+})
+
+// 取消注册
+api.shortcuts.unregister('my-shortcut')
+```
+
 ## 示例插件
+
+### 歌词截图分享
+
+```javascript
+const plugin = {
+  activate() {
+    api.log.info('歌词截图插件已激活')
+  },
+
+  deactivate() {
+    api.log.info('歌词截图插件已停用')
+  },
+
+  /**
+   * 生成歌词分享图
+   */
+  async generateShareImage() {
+    const state = await api.player.getState()
+    const lyrics = await api.player.getLyrics()
+    const lyricIndex = await api.player.getCurrentLyricIndex()
+
+    if (!state.currentTrack) {
+      api.ui.showNotification('没有正在播放的歌曲', 'warning')
+      return null
+    }
+
+    // 获取主题颜色
+    const colors = api.theme.getAllColors()
+    const isDark = (await api.theme.getCurrent()).isDark
+
+    // 创建画布
+    const { canvas, ctx } = api.utils.createCanvas(800, 600)
+
+    // 绘制背景
+    ctx.fillStyle = colors.mdSysColorBackground || (isDark ? '#1a1a1a' : '#ffffff')
+    ctx.fillRect(0, 0, 800, 600)
+
+    // 绘制封面（如果有）
+    if (state.currentTrack.cover) {
+      try {
+        const coverImg = await api.utils.loadImage(state.currentTrack.cover)
+        ctx.globalAlpha = 0.3
+        ctx.drawImage(coverImg, 0, 0, 800, 600)
+        ctx.globalAlpha = 1
+      } catch (e) {
+        api.log.debug('封面加载失败')
+      }
+    }
+
+    // 绘制歌词
+    ctx.fillStyle = colors.mdSysColorOnBackground || (isDark ? '#ffffff' : '#000000')
+    ctx.font = 'bold 32px sans-serif'
+    ctx.textAlign = 'center'
+
+    if (lyrics && lyricIndex >= 0 && lyrics[lyricIndex]) {
+      const lyric = lyrics[lyricIndex]
+      ctx.fillText(lyric.texts[0] || '', 400, 280)
+      
+      if (lyric.texts[1]) {
+        ctx.font = '24px sans-serif'
+        ctx.fillStyle = colors.mdSysColorOnSurfaceVariant || '#888888'
+        ctx.fillText(lyric.texts[1], 400, 320)
+      }
+    }
+
+    // 绘制歌曲信息
+    ctx.fillStyle = colors.mdSysColorPrimary || '#6750a4'
+    ctx.font = 'bold 24px sans-serif'
+    ctx.fillText(state.currentTrack.title || '未知歌曲', 400, 480)
+    
+    ctx.font = '18px sans-serif'
+    ctx.fillStyle = colors.mdSysColorOnSurfaceVariant || '#888888'
+    ctx.fillText(state.currentTrack.artist || '未知艺术家', 400, 510)
+
+    return canvas
+  },
+
+  /**
+   * 保存歌词图片
+   */
+  async saveImage() {
+    const canvas = await this.generateShareImage()
+    if (canvas) {
+      const path = await api.file.saveImage(canvas, 'lyrics-share.png', 'png')
+      if (path) {
+        api.ui.showNotification('图片已保存', 'info')
+      }
+    }
+  },
+
+  /**
+   * 复制歌词图片到剪贴板
+   */
+  async copyImage() {
+    const canvas = await this.generateShareImage()
+    if (canvas) {
+      await api.clipboard.writeImage(canvas)
+      api.ui.showNotification('图片已复制到剪贴板', 'info')
+    }
+  }
+}
+```
 
 ### 播放计数器
 

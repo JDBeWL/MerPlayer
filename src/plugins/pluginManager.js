@@ -44,6 +44,8 @@ class PluginManager {
       settingsPanels: [],       // 设置面板
       playerDecorators: [],     // 播放器装饰器
       commands: [],             // 命令
+      shortcuts: [],            // 快捷键
+      actionButtons: [],        // 操作按钮（显示在歌词区域等位置）
     })
     // 事件监听器
     this.eventListeners = new Map()

@@ -160,7 +160,9 @@
     "forDevelopers": "For Developers",
     "pluginDevHint": "Want to develop plugins? Check out the plugin development documentation to learn how to create your own plugins.",
     "viewTemplate": "View Template",
-    "playStats": "Play Stats"
+    "playStats": "Play Stats",
+    "about": "About",
+    "appDescription": "A modern music player with fluid experience"
   },
   "themeSelector": {
     "chooseThemeColor": "Choose Theme Color",

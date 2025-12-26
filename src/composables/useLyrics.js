@@ -148,6 +148,7 @@ export function useLyrics() {
     const loadLyrics = async (trackPath) => {
         if (!trackPath) { 
             lyrics.value = []; 
+            playerStore.lyrics = null;  // 同步到 store
             lyricsSource.value = 'local';
             onlineLyricsError.value = null;
             return; 
@@ -158,6 +159,7 @@ export function useLyrics() {
         if (cached) {
             logger.debug('Using cached online lyrics for:', trackPath);
             lyrics.value = cached.parsed;
+            playerStore.lyrics = cached.parsed;  // 同步到 store
             lyricsSource.value = cached.source;
             loading.value = false;
             return;
@@ -165,6 +167,7 @@ export function useLyrics() {
         
         loading.value = true;
         lyrics.value = [];
+        playerStore.lyrics = null;  // 同步到 store
         lyricsSource.value = 'local';
         onlineLyricsError.value = null;
         try {
@@ -174,6 +177,7 @@ export function useLyrics() {
                 const ext = FileUtils.getFileExtension(lyricsPath);
                 if (ext === 'lrc') lyrics.value = parseLRC(content);
                 else if (ext === 'ass') lyrics.value = parseASS(content);
+                playerStore.lyrics = lyrics.value;  // 同步到 store
                 lyricsSource.value = 'local';
             } else if (configStore.lyrics?.enableOnlineFetch) {
                 logger.debug('No local lyrics found, trying online fetch...');
@@ -182,6 +186,7 @@ export function useLyrics() {
                 if (onlineLrc) {
                     const parsed = parseLRC(onlineLrc);
                     lyrics.value = parsed;
+                    playerStore.lyrics = parsed;  // 同步到 store
                     lyricsSource.value = 'online';
                     
                     // 缓存在线歌词
@@ -219,6 +224,7 @@ export function useLyrics() {
             if (onlineLrc) {
                 const parsed = parseLRC(onlineLrc);
                 lyrics.value = parsed;
+                playerStore.lyrics = parsed;  // 同步到 store
                 lyricsSource.value = 'online';
                 
                 // 缓存在线歌词
@@ -267,6 +273,7 @@ export function useLyrics() {
         }
         if (idx !== activeIndex.value) {
             activeIndex.value = idx;
+            playerStore.currentLyricIndex = idx;  // 同步到 store
         }
     });
 

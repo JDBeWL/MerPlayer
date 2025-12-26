@@ -46,10 +46,23 @@
             </div>
         </div>
         
-        <!-- 底部控制栏 - 只保留偏移控制 -->
-        <div v-if="lyrics.length" class="lyrics-bottom-bar">
+        <!-- 底部控制栏 -->
+        <div v-if="lyrics.length || actionButtons.length" class="lyrics-bottom-bar">
+            <!-- 插件操作按钮 -->
+            <div v-if="actionButtons.length" class="plugin-action-buttons">
+                <button 
+                    v-for="btn in actionButtons" 
+                    :key="btn.id"
+                    class="action-btn"
+                    :title="btn.name"
+                    @click="handleActionButton(btn)"
+                >
+                    <span class="material-symbols-rounded">{{ btn.icon }}</span>
+                </button>
+            </div>
+            
             <!-- 歌词偏移控制 -->
-            <div class="lyrics-offset-control">
+            <div v-if="lyrics.length" class="lyrics-offset-control">
                 <button class="offset-btn" @click="adjustOffset(-0.5)" :title="$t('lyrics.offsetDelay')">
                     <span class="material-symbols-rounded">remove</span>
                 </button>
@@ -69,6 +82,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useConfigStore } from '@/stores/config';
 import { nextTick, ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useLyrics } from '@/composables/useLyrics';
+import { pluginManager } from '@/plugins';
 import logger from '@/utils/logger';
 
 export default {
@@ -86,6 +100,21 @@ export default {
         
         // 是否有当前播放的曲目
         const hasCurrentTrack = computed(() => !!playerStore.currentTrack);
+        
+        // 获取插件注册的操作按钮
+        const actionButtons = computed(() => {
+            return pluginManager.getExtensions('actionButtons')
+                .filter(btn => btn.location === 'lyrics')
+        });
+        
+        // 处理插件按钮点击
+        const handleActionButton = async (btn) => {
+            try {
+                await btn.action()
+            } catch (error) {
+                logger.error('插件按钮执行失败:', error)
+            }
+        };
         
         // 手动获取歌词状态
         const fetchingLyrics = ref(false);
@@ -336,7 +365,8 @@ export default {
             lyrics, loading, containerRef, configStore, lyricsSource, hasCurrentTrack, playerStore,
             isActive, isWordActive, getKaraokeStyle, handleLyricClick,
             handleScroll, isHovering, fetchingLyrics, handleFetchLyrics,
-            adjustOffset, resetOffset, formatOffset
+            adjustOffset, resetOffset, formatOffset,
+            actionButtons, handleActionButton
         };
     }
 };
@@ -421,7 +451,7 @@ export default {
     right: 16px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -429,6 +459,39 @@ export default {
 
 .lyrics-wrapper:hover .lyrics-bottom-bar {
     opacity: 1;
+}
+
+.plugin-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    background-color: var(--md-sys-color-surface-container);
+    border-radius: 20px;
+    pointer-events: auto;
+}
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    background-color: transparent;
+    color: var(--md-sys-color-on-surface-variant);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+    background-color: var(--md-sys-color-surface-container-highest);
+    color: var(--md-sys-color-primary);
+}
+
+.action-btn .material-symbols-rounded {
+    font-size: 20px;
 }
 
 .lyrics-offset-control {

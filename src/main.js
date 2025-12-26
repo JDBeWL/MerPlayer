@@ -26,6 +26,8 @@ setupThemeContrastValidation()
 // 加载内置插件
 import { pluginManager } from './plugins'
 import builtinPlugins from './plugins/builtins'
+import { loadAllPlugins } from './plugins/pluginLoader'
+import { shortcutManager } from './plugins/shortcutManager'
 
 const loadBuiltinPlugins = async () => {
   for (const plugin of builtinPlugins) {
@@ -39,6 +41,17 @@ const loadBuiltinPlugins = async () => {
     }
   }
   logger.info('内置插件加载完成')
+  
+  // 加载外部插件
+  try {
+    await loadAllPlugins()
+    logger.info('外部插件加载完成')
+  } catch (error) {
+    logger.error('加载外部插件失败:', error)
+  }
+  
+  // 启动快捷键管理器
+  shortcutManager.start()
 }
 
 loadBuiltinPlugins()

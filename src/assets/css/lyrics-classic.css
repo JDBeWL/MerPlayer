@@ -27,14 +27,6 @@
     color: var(--md-sys-color-primary);
 }
 
-.lyrics-style-classic .lyrics .english {
-    font-size: 1em;
-}
-
-.lyrics-style-classic .lyrics .chinese {
-    font-size: 1em;
-}
-
 .lyrics-style-classic .lyrics-display {
     mask-image: none;
     -webkit-mask-image: none;
