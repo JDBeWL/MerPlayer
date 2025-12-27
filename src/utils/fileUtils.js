@@ -195,7 +195,7 @@ export class FileUtils {
    */
   static isLyricsFile(filePath) {
     const extension = this.getFileExtension(filePath);
-    const lyricsExtensions = ['lrc', 'ass', 'ssa', 'srt'];
+    const lyricsExtensions = ['lrc', 'ass', 'srt'];
     return lyricsExtensions.includes(extension);
   }
 
@@ -209,7 +209,7 @@ export class FileUtils {
     const directory = this.getDirectoryPath(audioPath);
     
     // 尝试常见的歌词文件扩展名
-    const lyricsExtensions = ['lrc', 'ass', 'ssa', 'srt'];
+    const lyricsExtensions = ['lrc', 'ass', 'srt'];
     
     for (const ext of lyricsExtensions) {
       const lyricsPath = `${directory}/${baseName}.${ext}`;

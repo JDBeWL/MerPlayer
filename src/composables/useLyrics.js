@@ -3,6 +3,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useConfigStore } from '@/stores/config';
 import { FileUtils } from '@/utils/fileUtils';
 import { neteaseApi } from '@/utils/neteaseApi';
+import { LyricsParser } from '@/utils/lyricsParser';
 import { invoke } from '@tauri-apps/api/core';
 import logger from '@/utils/logger';
 
@@ -11,9 +12,6 @@ const onlineLyricsCache = new Map(); // key: trackPath, value: { lrc: string, pa
 
 // 模块级别的共享状态，确保所有 useLyrics 实例共享同一个 lyricsSource
 const sharedLyricsSource = ref('local');
-
-// 让出主线程的辅助函数
-const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
 
 export function useLyrics() {
     const playerStore = usePlayerStore();
@@ -24,107 +22,6 @@ export function useLyrics() {
     // 使用共享的 lyricsSource
     const lyricsSource = sharedLyricsSource;
     const onlineLyricsError = ref(null);
-
-    // 异步 LRC 解析，分块处理避免阻塞主线程
-    const parseLRC = async (lrcText) => {
-        const lines = lrcText.split("\n");
-        const pattern = /\[(\d{2}):(\d{2}):(\d{2})\]|\[(\d{2}):(\d{2})\.(\d{2,3})\]/g;
-        const resultMap = {};
-        const CHUNK_SIZE = 100; // 每 100 行让出一次主线程
-        
-        for (let i = 0; i < lines.length; i++) {
-            // 分块让出主线程
-            if (i > 0 && i % CHUNK_SIZE === 0) {
-                await yieldToMain();
-            }
-            
-            const line = lines[i];
-            const timestamps = [];
-            let match;
-            while ((match = pattern.exec(line)) !== null) {
-                let time;
-                if (match[1] !== undefined) {
-                    time = parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / 100;
-                } else {
-                    time = parseInt(match[4]) * 60 + parseInt(match[5]) + parseInt(match[6].padEnd(3, "0")) / 1000;
-                }
-                timestamps.push({ time, index: match.index });
-            }
-            if (timestamps.length < 1) continue;
-            const text = line.replace(pattern, "").trim();
-            if (!text) continue;
-            const startTime = timestamps[0].time;
-            resultMap[startTime] = resultMap[startTime] || { time: startTime, texts: [], karaoke: null };
-            if (timestamps.length > 1) {
-                resultMap[startTime].karaoke = {
-                    fullText: text,
-                    timings: timestamps.slice(1).map((s, i) => ({ time: s.time, position: i + 1 }))
-                };
-            }
-            resultMap[startTime].texts.push(text);
-        }
-        return Object.values(resultMap).sort((a, b) => a.time - b.time);
-    };
-
-    // 异步 ASS 解析，分块处理避免阻塞主线程
-    const parseASS = async (assText) => {
-        const lines = assText.split('\n');
-        const dialogues = [];
-        const toSeconds = (t) => {
-            const [h, m, s] = t.split(':');
-            return parseInt(h) * 3600 + parseInt(m) * 60 + parseFloat(s);
-        };
-        const CHUNK_SIZE = 100;
-        
-        for (let i = 0; i < lines.length; i++) {
-            if (i > 0 && i % CHUNK_SIZE === 0) {
-                await yieldToMain();
-            }
-            
-            const line = lines[i];
-            if (!line.startsWith('Dialogue:')) continue;
-            const parts = line.split(',');
-            if (parts.length < 10) continue;
-            const start = parts[1].trim();
-            const end = parts[2].trim();
-            const style = parts[3].trim();
-            const text = parts.slice(9).join(',').trim();
-            dialogues.push({ startTime: toSeconds(start), endTime: toSeconds(end), style, text });
-        }
-        const groupedMap = new Map();
-        dialogues.forEach(d => {
-            const key = d.startTime.toFixed(3) + '-' + d.endTime.toFixed(3);
-            if (!groupedMap.has(key)) {
-                groupedMap.set(key, { startTime: d.startTime, endTime: d.endTime, texts: { orig: '', ts: '' }, karaoke: null });
-            }
-            const group = groupedMap.get(key);
-            if (d.style === 'orig') group.texts.orig = d.text;
-            if (d.style === 'ts') group.texts.ts = d.text;
-        });
-        const result = [];
-        groupedMap.forEach(group => {
-            const parseKaraoke = (text) => {
-                const karaokeTag = /{\\k[f]?(\d+)}([^{}]*)/g;
-                let words = [];
-                let accTime = group.startTime;
-                let match;
-                while ((match = karaokeTag.exec(text)) !== null) {
-                    const duration = parseInt(match[1]) * 0.01;
-                    words.push({ text: match[2], start: accTime, end: accTime + duration });
-                    accTime += duration;
-                }
-                return words;
-            };
-            const enWords = parseKaraoke(group.texts.orig);
-            result.push({
-                time: group.startTime,
-                texts: [group.texts.orig.replace(/{.*?}/g, ''), group.texts.ts.replace(/{.*?}/g, '')],
-                words: enWords,
-                karaoke: enWords.length > 0
-            });
-        });
-        return result.sort((a, b) => a.time - b.time);
-    };
 
     const fetchOnlineLyrics = async (track) => {
         if (!track) return null;
@@ -195,8 +92,8 @@ export function useLyrics() {
             if (lyricsPath) {
                 const content = await FileUtils.readFile(lyricsPath);
                 const ext = FileUtils.getFileExtension(lyricsPath);
-                if (ext === 'lrc') lyrics.value = await parseLRC(content);
-                else if (ext === 'ass') lyrics.value = await parseASS(content);
+                // 使用统一的异步解析器
+                lyrics.value = await LyricsParser.parseAsync(content, ext);
                 playerStore.lyrics = lyrics.value;  // 同步到 store
                 lyricsSource.value = 'local';
             } else if (configStore.lyrics?.enableOnlineFetch) {
@@ -204,7 +101,7 @@ export function useLyrics() {
                 const track = playerStore.currentTrack;
                 const onlineLrc = await fetchOnlineLyrics(track);
                 if (onlineLrc) {
-                    const parsed = await parseLRC(onlineLrc);
+                    const parsed = await LyricsParser.parseAsync(onlineLrc, 'lrc');
                     lyrics.value = parsed;
                     playerStore.lyrics = parsed;  // 同步到 store
                     lyricsSource.value = 'online';
@@ -242,7 +139,7 @@ export function useLyrics() {
         try {
             const onlineLrc = await fetchOnlineLyrics(track);
             if (onlineLrc) {
-                const parsed = await parseLRC(onlineLrc);
+                const parsed = await LyricsParser.parseAsync(onlineLrc, 'lrc');
                 lyrics.value = parsed;
                 playerStore.lyrics = parsed;  // 同步到 store
                 lyricsSource.value = 'online';

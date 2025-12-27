@@ -3,9 +3,12 @@
  */
 import logger from './logger';
 
+// 让出主线程的辅助函数
+const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
+
 export class LyricsParser {
   /**
-   * 解析歌词文件
+   * 解析歌词文件（同步版本，用于简单场景）
    * @param {string} content - 歌词文件内容
    * @param {string} format - 歌词格式（lrc, ass, srt）
    * @returns {Array<{time: number, text: string}>} 解析后的歌词数组
@@ -15,7 +18,6 @@ export class LyricsParser {
       return []
     }
 
-    // 自动检测格式
     if (format === 'auto') {
       format = this.detectFormat(content)
     }
@@ -24,7 +26,6 @@ export class LyricsParser {
       case 'lrc':
         return this.parseLRC(content)
       case 'ass':
-      case 'ssa':
         return this.parseASS(content)
       case 'srt':
         return this.parseSRT(content)
@@ -35,29 +36,151 @@ export class LyricsParser {
   }
 
   /**
-   * 自动检测歌词格式
+   * 异步解析歌词文件（支持卡拉OK、翻译，分块处理避免阻塞主线程）
    * @param {string} content - 歌词文件内容
-   * @returns {string} 检测到的格式
+   * @param {string} format - 歌词格式（lrc, ass）
+   * @returns {Promise<Array>} 解析后的歌词数组
+   */
+  static async parseAsync(content, format = 'auto') {
+    if (!content || typeof content !== 'string') {
+      return []
+    }
+
+    if (format === 'auto') {
+      format = this.detectFormat(content)
+    }
+
+    switch (format.toLowerCase()) {
+      case 'lrc':
+        return this.parseLRCAsync(content)
+      case 'ass':
+        return this.parseASSAsync(content)
+      default:
+        return this.parse(content, format)
+    }
+  }
+
+  /**
+   * 自动检测歌词格式
    */
   static detectFormat(content) {
-    // 检测 ASS/SSA 格式
     if (content.includes('[Script Info]') || content.includes('[V4+ Styles]') || content.includes('[Events]')) {
       return 'ass'
     }
-
-    // 检测 SRT 格式
     if (/^\d+\s*\n\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n/m.test(content)) {
       return 'srt'
     }
-
-    // 默认为 LRC 格式
     return 'lrc'
   }
 
   /**
-   * 解析 LRC 格式歌词
-   * @param {string} content - LRC 歌词内容
-   * @returns {Array<{time: number, text: string}>} 解析后的歌词数组
+   * 异步解析 LRC 格式歌词（支持卡拉OK、翻译、分块处理）
+   */
+  static async parseLRCAsync(content) {
+    const lines = content.split("\n");
+    const pattern = /\[(\d{2}):(\d{2}):(\d{2})\]|\[(\d{2}):(\d{2})\.(\d{2,3})\]/g;
+    const resultMap = {};
+    const CHUNK_SIZE = 100;
+    
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0 && i % CHUNK_SIZE === 0) {
+        await yieldToMain();
+      }
+      
+      const line = lines[i];
+      const timestamps = [];
+      let match;
+      while ((match = pattern.exec(line)) !== null) {
+        let time;
+        if (match[1] !== undefined) {
+          time = parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / 100;
+        } else {
+          time = parseInt(match[4]) * 60 + parseInt(match[5]) + parseInt(match[6].padEnd(3, "0")) / 1000;
+        }
+        timestamps.push({ time, index: match.index });
+      }
+      if (timestamps.length < 1) continue;
+      const text = line.replace(pattern, "").trim();
+      if (!text) continue;
+      const startTime = timestamps[0].time;
+      resultMap[startTime] = resultMap[startTime] || { time: startTime, texts: [], karaoke: null };
+      if (timestamps.length > 1) {
+        resultMap[startTime].karaoke = {
+          fullText: text,
+          timings: timestamps.slice(1).map((s, idx) => ({ time: s.time, position: idx + 1 }))
+        };
+      }
+      resultMap[startTime].texts.push(text);
+    }
+    return Object.values(resultMap).sort((a, b) => a.time - b.time);
+  }
+
+  /**
+   * 异步解析 ASS 格式歌词（支持卡拉OK、翻译、分块处理）
+   */
+  static async parseASSAsync(content) {
+    const lines = content.split('\n');
+    const dialogues = [];
+    const toSeconds = (t) => {
+      const [h, m, s] = t.split(':');
+      return parseInt(h) * 3600 + parseInt(m) * 60 + parseFloat(s);
+    };
+    const CHUNK_SIZE = 100;
+    
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0 && i % CHUNK_SIZE === 0) {
+        await yieldToMain();
+      }
+      
+      const line = lines[i];
+      if (!line.startsWith('Dialogue:')) continue;
+      const parts = line.split(',');
+      if (parts.length < 10) continue;
+      const start = parts[1].trim();
+      const end = parts[2].trim();
+      const style = parts[3].trim();
+      const text = parts.slice(9).join(',').trim();
+      dialogues.push({ startTime: toSeconds(start), endTime: toSeconds(end), style, text });
+    }
+    
+    const groupedMap = new Map();
+    dialogues.forEach(d => {
+      const key = d.startTime.toFixed(3) + '-' + d.endTime.toFixed(3);
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, { startTime: d.startTime, endTime: d.endTime, texts: { orig: '', ts: '' }, karaoke: null });
+      }
+      const group = groupedMap.get(key);
+      if (d.style === 'orig') group.texts.orig = d.text;
+      if (d.style === 'ts') group.texts.ts = d.text;
+    });
+    
+    const result = [];
+    groupedMap.forEach(group => {
+      const parseKaraoke = (text) => {
+        const karaokeTag = /{\\k[f]?(\d+)}([^{}]*)/g;
+        let words = [];
+        let accTime = group.startTime;
+        let match;
+        while ((match = karaokeTag.exec(text)) !== null) {
+          const duration = parseInt(match[1]) * 0.01;
+          words.push({ text: match[2], start: accTime, end: accTime + duration });
+          accTime += duration;
+        }
+        return words;
+      };
+      const enWords = parseKaraoke(group.texts.orig);
+      result.push({
+        time: group.startTime,
+        texts: [group.texts.orig.replace(/{.*?}/g, ''), group.texts.ts.replace(/{.*?}/g, '')],
+        words: enWords,
+        karaoke: enWords.length > 0
+      });
+    });
+    return result.sort((a, b) => a.time - b.time);
+  }
+
+  /**
+   * 解析 LRC 格式歌词（同步版本）
    */
   static parseLRC(content) {
     const lines = content.split('\n')
@@ -68,7 +191,6 @@ export class LyricsParser {
       const trimmedLine = line.trim()
       if (!trimmedLine) continue
       
-      // 处理多时间标签的行（如 [00:12.34][00:56.78]歌词内容）
       const timeMatches = [...trimmedLine.matchAll(/\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\]/g)]
       const textPart = trimmedLine.replace(/\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\]/g, '').trim()
       
@@ -78,11 +200,9 @@ export class LyricsParser {
           const seconds = parseInt(match[2])
           const milliseconds = match[3] ? parseInt(match[3].padEnd(3, '0').substring(0, 3)) : 0
           const time = minutes * 60 + seconds + milliseconds / 1000
-          
           lyrics.push({ time, text: textPart })
         }
       } else {
-        // 尝试单时间标签格式
         const singleMatch = trimmedLine.match(timeRegex)
         if (singleMatch) {
           const minutes = parseInt(singleMatch[1])
@@ -90,7 +210,6 @@ export class LyricsParser {
           const milliseconds = singleMatch[3] ? parseInt(singleMatch[3].padEnd(3, '0').substring(0, 3)) : 0
           const time = minutes * 60 + seconds + milliseconds / 1000
           const text = singleMatch[4].trim()
-          
           if (text) {
             lyrics.push({ time, text })
           }
@@ -98,16 +217,12 @@ export class LyricsParser {
       }
     }
     
-    // 按时间排序
     lyrics.sort((a, b) => a.time - b.time)
-    
     return lyrics
   }
 
   /**
-   * 解析 ASS/SSA 格式歌词
-   * @param {string} content - ASS/SSA 歌词内容
-   * @returns {Array<{time: number, text: string}>} 解析后的歌词数组
+   * 解析 ASS 格式歌词（同步版本）
    */
   static parseASS(content) {
     const lines = content.split('\n')
@@ -118,30 +233,25 @@ export class LyricsParser {
     for (const line of lines) {
       const trimmedLine = line.trim()
       
-      // 检测事件部分
       if (trimmedLine === '[Events]') {
         inEvents = true
         continue
       }
       
-      // 检测其他部分，退出事件处理
       if (inEvents && trimmedLine.startsWith('[')) {
         inEvents = false
         continue
       }
       
-      // 处理格式行
       if (inEvents && trimmedLine.startsWith('Format:')) {
         formatFields = trimmedLine.substring(7).split(',').map(field => field.trim())
         continue
       }
       
-      // 处理对话行
       if (inEvents && trimmedLine.startsWith('Dialogue:')) {
         const parts = trimmedLine.substring(9).split(',')
         
         if (parts.length >= formatFields.length) {
-          // 查找开始时间和文本字段
           const startIndex = formatFields.indexOf('Start')
           const textIndex = formatFields.indexOf('Text')
           
@@ -157,16 +267,12 @@ export class LyricsParser {
       }
     }
     
-    // 按时间排序
     lyrics.sort((a, b) => a.time - b.time)
-    
     return lyrics
   }
 
   /**
    * 解析 SRT 格式歌词
-   * @param {string} content - SRT 歌词内容
-   * @returns {Array<{time: number, text: string}>} 解析后的歌词数组
    */
   static parseSRT(content) {
     const blocks = content.trim().split(/\n\s*\n/)
@@ -177,18 +283,11 @@ export class LyricsParser {
       const lines = block.trim().split('\n')
       if (lines.length < 2) continue
       
-      // 解析时间行
       const timeMatch = lines[1].match(timeRegex)
       if (!timeMatch) continue
       
-      const startHours = parseInt(timeMatch[1])
-      const startMinutes = parseInt(timeMatch[2])
-      const startSeconds = parseInt(timeMatch[3])
-      const startMilliseconds = parseInt(timeMatch[4])
-      
-      const startTime = startHours * 3600 + startMinutes * 60 + startSeconds + startMilliseconds / 1000
-      
-      // 获取文本内容（跳过序号和时间行）
+      const startTime = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + 
+                        parseInt(timeMatch[3]) + parseInt(timeMatch[4]) / 1000
       const text = lines.slice(2).join('\n').trim()
       
       if (text) {
@@ -196,35 +295,24 @@ export class LyricsParser {
       }
     }
     
-    // 按时间排序
     lyrics.sort((a, b) => a.time - b.time)
-    
     return lyrics
   }
 
   /**
    * 解析 ASS 时间格式
-   * @param {string} timeStr - ASS 时间字符串 (H:MM:SS.cc)
-   * @returns {number|null} 时间（秒）
    */
   static parseASSTime(timeStr) {
     const match = timeStr.match(/^(\d+):(\d{2}):(\d{2})\.(\d{2})$/)
     if (match) {
-      const hours = parseInt(match[1])
-      const minutes = parseInt(match[2])
-      const seconds = parseInt(match[3])
-      const centiseconds = parseInt(match[4])
-      
-      return hours * 3600 + minutes * 60 + seconds + centiseconds / 100
+      return parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + 
+             parseInt(match[3]) + parseInt(match[4]) / 100
     }
     return null
   }
 
   /**
    * 将歌词数组转换为指定格式的字符串
-   * @param {Array<{time: number, text: string}>} lyrics - 歌词数组
-   * @param {string} format - 目标格式（lrc, ass, srt）
-   * @returns {string} 格式化后的歌词字符串
    */
   static stringify(lyrics, format = 'lrc') {
     if (!lyrics || !Array.isArray(lyrics)) {
@@ -244,27 +332,16 @@ export class LyricsParser {
     }
   }
 
-  /**
-   * 将歌词数组转换为 LRC 格式字符串
-   * @param {Array<{time: number, text: string}>} lyrics - 歌词数组
-   * @returns {string} LRC 格式字符串
-   */
   static stringifyLRC(lyrics) {
     return lyrics.map(item => {
       const minutes = Math.floor(item.time / 60)
       const seconds = Math.floor(item.time % 60)
       const milliseconds = Math.floor((item.time % 1) * 100)
-      
       const timeTag = `[${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(2, '0')}]`
       return `${timeTag}${item.text}`
     }).join('\n')
   }
 
-  /**
-   * 将歌词数组转换为 ASS 格式字符串
-   * @param {Array<{time: number, text: string}>} lyrics - 歌词数组
-   * @returns {string} ASS 格式字符串
-   */
   static stringifyASS(lyrics) {
     let ass = `[Script Info]
 Title: Lyrics
@@ -277,51 +354,30 @@ Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `
-
     return ass + lyrics.map((item, index) => {
-      const hours = Math.floor(item.time / 3600)
-      const minutes = Math.floor((item.time % 3600) / 60)
-      const seconds = Math.floor(item.time % 60)
-      const centiseconds = Math.floor((item.time % 1) * 100)
-      
-      const startTime = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${centiseconds.toString().padStart(2, '0')}`
-      
-      // 设置结束时间为下一句的开始时间或当前时间+5秒
+      const formatTime = (t) => {
+        const h = Math.floor(t / 3600)
+        const m = Math.floor((t % 3600) / 60)
+        const s = Math.floor(t % 60)
+        const cs = Math.floor((t % 1) * 100)
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`
+      }
       const nextTime = index < lyrics.length - 1 ? lyrics[index + 1].time : item.time + 5
-      const endHours = Math.floor(nextTime / 3600)
-      const endMinutes = Math.floor((nextTime % 3600) / 60)
-      const endSeconds = Math.floor(nextTime % 60)
-      const endCentiseconds = Math.floor((nextTime % 1) * 100)
-      
-      const endTime = `${endHours}:${endMinutes.toString().padStart(2, '0')}:${endSeconds.toString().padStart(2, '0')}.${endCentiseconds.toString().padStart(2, '0')}`
-      
-      return `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,${item.text}`
+      return `Dialogue: 0,${formatTime(item.time)},${formatTime(nextTime)},Default,,0,0,0,,${item.text}`
     }).join('\n')
   }
 
-  /**
-   * 将歌词数组转换为 SRT 格式字符串
-   * @param {Array<{time: number, text: string}>} lyrics - 歌词数组
-   * @returns {string} SRT 格式字符串
-   */
   static stringifySRT(lyrics) {
     return lyrics.map((item, index) => {
-      const hours = Math.floor(item.time / 3600)
-      const minutes = Math.floor((item.time % 3600) / 60)
-      const seconds = Math.floor(item.time % 60)
-      const milliseconds = Math.floor((item.time % 1) * 1000)
-      
-      // 设置结束时间为下一句的开始时间或当前时间+5秒
+      const formatTime = (t) => {
+        const h = Math.floor(t / 3600)
+        const m = Math.floor((t % 3600) / 60)
+        const s = Math.floor(t % 60)
+        const ms = Math.floor((t % 1) * 1000)
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`
+      }
       const nextTime = index < lyrics.length - 1 ? lyrics[index + 1].time : item.time + 5
-      const endHours = Math.floor(nextTime / 3600)
-      const endMinutes = Math.floor((nextTime % 3600) / 60)
-      const endSeconds = Math.floor(nextTime % 60)
-      const endMilliseconds = Math.floor((nextTime % 1) * 1000)
-      
-      const startTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')},${milliseconds.toString().padStart(3, '0')}`
-      const endTime = `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}:${endSeconds.toString().padStart(2, '0')},${endMilliseconds.toString().padStart(3, '0')}`
-      
-      return `${index + 1}\n${startTime} --> ${endTime}\n${item.text}\n`
+      return `${index + 1}\n${formatTime(item.time)} --> ${formatTime(nextTime)}\n${item.text}\n`
     }).join('\n')
   }
 }

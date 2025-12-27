@@ -86,8 +86,7 @@ pub struct VisualizationSource<I: Source<Item = f32> + Send> {
     last_position_emit_time: std::sync::atomic::AtomicU64,
     eq_settings: Arc<RwLock<EqSettings>>,
     eq_processor: EqProcessor,
-    // 缓存的 EQ 设置，减少锁读取频率
-    cached_eq_enabled: bool,
+    // EQ 设置更新计数器，减少锁读取频率
     eq_update_counter: u32,
     // 预分配的 FFT 工作缓冲区（动态大小）
     fft_buffer: Vec<f32>,
@@ -105,6 +104,9 @@ struct EqProcessor {
     states: Vec<Vec<crate::equalizer::BiquadState>>,
     sample_rate: f32,
     channels: usize,
+    // 缓存的 EQ 设置，避免每次处理都读取锁
+    cached_enabled: bool,
+    cached_preamp_multiplier: f32, // 预计算的 preamp 乘数，避免每采样调用 powf
 }
 
 impl EqProcessor {
@@ -114,6 +116,19 @@ impl EqProcessor {
             states: vec![vec![crate::equalizer::BiquadState::default(); channels as usize]; EQ_BAND_COUNT],
             sample_rate: sample_rate as f32,
             channels: channels as usize,
+            cached_enabled: false,
+            cached_preamp_multiplier: 1.0,
+        }
+    }
+
+    /// 更新缓存的设置和滤波器系数
+    fn update_settings(&mut self, settings: &EqSettings) {
+        self.cached_enabled = settings.enabled;
+        // 预计算 preamp 乘数：10^(preamp_dB / 20)
+        self.cached_preamp_multiplier = 10.0_f32.powf(settings.preamp / 20.0);
+        
+        if settings.enabled {
+            self.update_coefficients(settings);
         }
     }
 
@@ -124,13 +139,21 @@ impl EqProcessor {
         }
     }
 
-    fn process_sample(&mut self, input: f32, channel: usize, settings: &EqSettings) -> f32 {
-        if !settings.enabled { return input; }
-        let mut sample = input * 10.0_f32.powf(settings.preamp / 20.0);
+    /// 使用缓存的设置处理采样（热路径优化）
+    #[inline(always)]
+    fn process_sample_cached(&mut self, input: f32, channel: usize) -> f32 {
+        if !self.cached_enabled { return input; }
+        let mut sample = input * self.cached_preamp_multiplier;
         for (band, coeffs) in self.coefficients.iter().enumerate() {
             sample = self.states[band][channel].process(sample, coeffs);
         }
         soft_clip(sample)
+    }
+
+    /// 检查 EQ 是否启用（用于快速路径判断）
+    #[inline(always)]
+    const fn is_enabled(&self) -> bool {
+        self.cached_enabled
     }
 }
 
@@ -180,7 +203,6 @@ impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
             last_position_emit_time: std::sync::atomic::AtomicU64::new(0),
             eq_settings: Arc::new(RwLock::new(EqSettings::default())),
             eq_processor: EqProcessor::new(sr, ch),
-            cached_eq_enabled: false,
             eq_update_counter: 0,
             fft_buffer: vec![0.0; fft_size],
             spectrum_buffer: vec![0.0; 128],
@@ -202,9 +224,9 @@ impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
     #[must_use]
     pub fn with_eq_settings(mut self, eq_settings: Arc<RwLock<EqSettings>>) -> Self {
         self.eq_settings = eq_settings;
+        // 初始化时同步 EQ 设置到处理器缓存
         if let Ok(s) = self.eq_settings.read() {
-            self.eq_processor.update_coefficients(&s);
-            self.cached_eq_enabled = s.enabled;
+            self.eq_processor.update_settings(&s);
         }
         self
     }
@@ -222,35 +244,16 @@ impl<I: Source<Item = f32> + Send> Iterator for VisualizationSource<I> {
         
         // 每 512 个采样才检查一次 EQ 设置，减少锁竞争
         self.eq_update_counter += 1;
-        let should_update_eq = self.eq_update_counter >= 512;
-        
-        let processed = if should_update_eq {
+        if self.eq_update_counter >= 512 {
             self.eq_update_counter = 0;
+            // 尝试获取锁更新设置，失败则使用缓存的设置继续处理
             if let Ok(s) = self.eq_settings.try_read() {
-                self.cached_eq_enabled = s.enabled;
-                if self.cached_eq_enabled {
-                    self.eq_processor.update_coefficients(&s);
-                }
-                self.eq_processor.process_sample(sample, ch, &s)
-            } else {
-                // 锁获取失败时使用缓存的状态
-                if self.cached_eq_enabled {
-                    // 使用上次的系数处理
-                    let settings = EqSettings { enabled: true, ..Default::default() };
-                    self.eq_processor.process_sample(sample, ch, &settings)
-                } else {
-                    sample
-                }
+                self.eq_processor.update_settings(&s);
             }
-        } else {
-            // 不更新设置，直接使用缓存的状态处理
-            if self.cached_eq_enabled {
-                let settings = EqSettings { enabled: true, ..Default::default() };
-                self.eq_processor.process_sample(sample, ch, &settings)
-            } else {
-                sample
-            }
-        };
+        }
+        
+        // 使用缓存的设置处理采样（热路径，无锁）
+        let processed = self.eq_processor.process_sample_cached(sample, ch);
 
         self.buffer.push(processed);
         if self.buffer.len() >= self.fft_size {
@@ -505,9 +508,15 @@ fn decode_and_push_to_wasapi(
     if stop_flag.load(Ordering::SeqCst) || thread_id_ref.load(Ordering::SeqCst) != my_id { return; }
 
     let mut eq_proc = EqProcessor::new(src_sr, src_ch);
+    // 初始化 EQ 设置
+    if let Ok(settings) = eq_settings.read() {
+        eq_proc.update_settings(&settings);
+    }
     let need_resample = src_sr != target_sr;
     // 根据源采样率动态计算 chunk 大小
     let chunk_size = calculate_decode_chunk_size(src_sr);
+    // EQ 设置更新计数器
+    let mut eq_update_counter: u32 = 0;
     let mut resampler: Option<SincFixedIn<f32>> = if need_resample {
         SincFixedIn::<f32>::new(
             target_sr as f64 / src_sr as f64,
@@ -544,13 +553,20 @@ fn decode_and_push_to_wasapi(
             input_frames[i % src_ch as usize].push(*s);
         }
 
-        if let Ok(settings) = eq_settings.try_read() {
-            if settings.enabled {
-                eq_proc.update_coefficients(&settings);
-                for ch in 0..src_ch as usize {
-                    for s in &mut input_frames[ch] {
-                        *s = eq_proc.process_sample(*s, ch, &settings);
-                    }
+        // 每个 chunk 更新一次 EQ 设置（约每 21ms @ 48kHz）
+        eq_update_counter += 1;
+        if eq_update_counter >= 4 { // 约每 4 个 chunk 检查一次
+            eq_update_counter = 0;
+            if let Ok(settings) = eq_settings.try_read() {
+                eq_proc.update_settings(&settings);
+            }
+        }
+
+        // 使用缓存的设置处理 EQ
+        if eq_proc.is_enabled() {
+            for ch in 0..src_ch as usize {
+                for s in &mut input_frames[ch] {
+                    *s = eq_proc.process_sample_cached(*s, ch);
                 }
             }
         }

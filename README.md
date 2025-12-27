@@ -135,6 +135,6 @@ npm run tauri build
 
 本项目的部分实现参考了以下项目
 
-**歌词获取**
+**歌词获取逻辑参考**
 
 [![LDDC](https://gh-card.dev/repos/chenmozhijin/LDDC.svg)](https://github.com/chenmozhijin/LDDC)

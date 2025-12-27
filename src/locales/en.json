@@ -84,6 +84,7 @@
     "directoryScan": "Directory Scan",
     "enableSubdirectoryScan": "Enable subdirectory scanning",
     "maxDepth": "Maximum scan depth",
+    "maxDepthDesc": "Maximum recursion depth for subdirectory scanning",
     "ignoreHiddenFolders": "Ignore hidden folders",
     "titleExtraction": "Title Extraction",
     "preferMetadata": "Prefer metadata",

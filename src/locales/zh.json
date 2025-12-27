@@ -84,6 +84,7 @@
     "directoryScan": "目录扫描",
     "enableSubdirectoryScan": "启用子目录扫描",
     "maxDepth": "最大扫描深度",
+    "maxDepthDesc": "子目录扫描的最大递归深度",
     "ignoreHiddenFolders": "忽略隐藏文件夹",
     "titleExtraction": "标题提取",
     "preferMetadata": "优先使用元数据",

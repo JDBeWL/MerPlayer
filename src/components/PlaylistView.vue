@@ -83,38 +83,9 @@ const playlistContentRef = ref(null)
 const isClosing = ref(false)
 let closeTimeout = null
 
-// 滚动到当前播放的歌曲
-const scrollToCurrentTrack = () => {
-  if (!currentTrack.value || playlist.value.length === 0) return
-  
-  const currentIndex = playlist.value.findIndex(t => t.path === currentTrack.value.path)
-  if (currentIndex === -1) return
-  
-  nextTick(() => {
-    const container = document.querySelector('.playlist-content')
-    const items = document.querySelectorAll('.list-item')
-    
-    if (container && items[currentIndex]) {
-      const item = items[currentIndex]
-      const containerRect = container.getBoundingClientRect()
-      const itemRect = item.getBoundingClientRect()
-      
-      // 计算滚动位置，让当前歌曲显示在容器中间
-      const scrollTop = item.offsetTop - container.offsetTop - (containerRect.height / 2) + (itemRect.height / 2)
-      
-      container.scrollTo({
-        top: Math.max(0, scrollTop),
-        behavior: 'smooth'
-      })
-    }
-  })
-}
-
-// 组件挂载时滚动到当前歌曲
-onMounted(() => {
-  // 稍微延迟以确保列表已渲染
-  setTimeout(scrollToCurrentTrack, 100)
-})
+// 滚动到当前播放的歌曲（函数定义移到后面，在 processedPlaylist 定义之后）
+let hasScrolledOnMount = false
+let stopWatchScrollOnMount = null
 
 // 关闭动画处理
 const handleClose = () => {
@@ -316,6 +287,44 @@ const processPlaylistAsync = () => {
 // 监听 playlist 变化，延迟处理
 const stopWatchProcessedPlaylist = watch(playlist, processPlaylistAsync, { immediate: true, deep: false })
 
+// 滚动到当前播放的歌曲
+const scrollToCurrentTrack = () => {
+  if (!currentTrack.value || processedPlaylist.value.length === 0) return
+  
+  const currentIndex = processedPlaylist.value.findIndex(t => t.path === currentTrack.value.path)
+  if (currentIndex === -1) return
+  
+  // 使用 setTimeout 确保 DOM 已完全渲染
+  setTimeout(() => {
+    const container = document.querySelector('.playlist-content')
+    const items = document.querySelectorAll('.list-item')
+    
+    if (container && items[currentIndex]) {
+      const item = items[currentIndex]
+      // 使用 scrollIntoView 更可靠
+      item.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      })
+    }
+  }, 50)
+}
+
+// 组件挂载时滚动到当前歌曲
+onMounted(() => {
+  // 监听 processedPlaylist 变化，当列表准备好后滚动到当前歌曲
+  stopWatchScrollOnMount = watch(processedPlaylist, (newList) => {
+    if (!hasScrolledOnMount && newList.length > 0 && currentTrack.value) {
+      hasScrolledOnMount = true
+      scrollToCurrentTrack()
+      // 滚动完成后停止监听
+      if (stopWatchScrollOnMount) {
+        stopWatchScrollOnMount()
+      }
+    }
+  }, { immediate: true })
+})
+
 // 组件卸载时清理所有资源
 onUnmounted(() => {
   // 清理定时器
@@ -328,6 +337,7 @@ onUnmounted(() => {
   stopWatchCurrentTrack()
   stopWatchPlaylist()
   stopWatchProcessedPlaylist()
+  stopWatchScrollOnMount?.()
   
   // 清理所有回调
   cleanupCallbacks()
@@ -459,8 +469,6 @@ const removeTrackByPath = (path) => {
   transform: translateZ(0);
   /* 使用 contain 优化渲染性能，限制重绘范围 */
   contain: layout style paint;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
 }
 
 .list-item:hover {

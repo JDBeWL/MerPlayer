@@ -36,6 +36,46 @@
       </div>
     </div>
     
+    <!-- 目录扫描设置 -->
+    <div class="settings-section">
+      <h4 class="section-title">{{ $t('config.directoryScan') }}</h4>
+      
+      <div class="setting-item" @click="toggleDirectoryScan('enableSubdirectoryScan')">
+        <div class="setting-info">
+          <span class="setting-label">{{ $t('config.enableSubdirectoryScan') }}</span>
+        </div>
+        <div class="switch" :class="{ active: configStore.directoryScan.enableSubdirectoryScan }">
+          <div class="switch-track"></div>
+          <div class="switch-handle"></div>
+        </div>
+      </div>
+      
+      <div class="setting-item" v-if="configStore.directoryScan.enableSubdirectoryScan">
+        <div class="setting-info">
+          <span class="setting-label">{{ $t('config.maxDepth') }}</span>
+        </div>
+        <div class="number-input">
+          <button class="number-btn" @click="decreaseMaxDepth" :disabled="configStore.directoryScan.maxDepth <= 1">
+            <span class="material-symbols-rounded">remove</span>
+          </button>
+          <span class="number-value">{{ configStore.directoryScan.maxDepth }}</span>
+          <button class="number-btn" @click="increaseMaxDepth" :disabled="configStore.directoryScan.maxDepth >= 10">
+            <span class="material-symbols-rounded">add</span>
+          </button>
+        </div>
+      </div>
+      
+      <div class="setting-item" @click="toggleDirectoryScan('ignoreHiddenFolders')">
+        <div class="setting-info">
+          <span class="setting-label">{{ $t('config.ignoreHiddenFolders') }}</span>
+        </div>
+        <div class="switch" :class="{ active: configStore.directoryScan.ignoreHiddenFolders }">
+          <div class="switch-track"></div>
+          <div class="switch-handle"></div>
+        </div>
+      </div>
+    </div>
+    
     <div class="settings-section">
       <h4 class="section-title">{{ $t('config.display') || '显示' }}</h4>
       
@@ -114,6 +154,25 @@ const saveConfig = async () => {
 const toggleSetting = async (key) => {
   configStore.general[key] = !configStore.general[key]
   await saveConfig()
+}
+
+const toggleDirectoryScan = async (key) => {
+  configStore.directoryScan[key] = !configStore.directoryScan[key]
+  configStore.setDirectoryScanConfig(configStore.directoryScan)
+}
+
+const increaseMaxDepth = () => {
+  if (configStore.directoryScan.maxDepth < 10) {
+    configStore.directoryScan.maxDepth++
+    configStore.setDirectoryScanConfig(configStore.directoryScan)
+  }
+}
+
+const decreaseMaxDepth = () => {
+  if (configStore.directoryScan.maxDepth > 1) {
+    configStore.directoryScan.maxDepth--
+    configStore.setDirectoryScanConfig(configStore.directoryScan)
+  }
 }
 
 const handleLanguageChange = async () => {
@@ -259,5 +318,57 @@ onMounted(() => {
 .md3-select:focus {
   outline: 1px solid var(--md-sys-color-primary);
   border-color: var(--md-sys-color-primary);
+}
+
+/* 设置描述文字 */
+.setting-desc {
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  margin-top: 2px;
+}
+
+/* 数字输入控件 */
+.number-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background-color: var(--md-sys-color-surface-container);
+  border-radius: 20px;
+  padding: 4px;
+}
+
+.number-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background-color: transparent;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.number-btn:hover:not(:disabled) {
+  background-color: var(--md-sys-color-surface-container-highest);
+}
+
+.number-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.number-btn .material-symbols-rounded {
+  font-size: 20px;
+}
+
+.number-value {
+  min-width: 28px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface);
 }
 </style>
