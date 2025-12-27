@@ -1,8 +1,11 @@
 ![light-virtview-pic](/RISE-pink-light-virtview-ass.png)
 ![dark-modlyrics-pic](/ツキノカメ-blue-dark-modlyrics-ass.png)
 ![light-classic-pic](/BUZZ_CUTZ-blue-light-classiclyrics-lrc.png)
-> 如你所见，这就是一个非常简单的音乐播放器，部分功能未经验证其高可靠性。
 
+> **简单、纯粹的音乐播放器**
+> 
+> 这是一款基于Tauri v2开发的音乐播放器，专注于高质量音频输出与极致的歌词显示体验。
+> *注意：部分功能（如WASAPI独占模式）正处于开发阶段，可能存在不稳定性。*
 # 功能特性
 
 ## 音频播放
@@ -123,7 +126,10 @@ npm run tauri build
 ```
 
 # 注意
-程序会在运行的目录下生成一个配置文件夹用于记录配置
+
+本程序为Tauri框架设计的应用，严重依赖WebView，但是程序可以以单文件运行，但是程序仍然会释放目录。
+
+**法律声明**：本项目在线歌词功能仅用于技术研究。本软件不提供、不存储任何受版权保护的音乐文件。请在当地法律允许的范围内使用。
 
 # 致谢
 
