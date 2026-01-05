@@ -102,13 +102,28 @@ export default {
     const getKaraokeStyle = (word) => {
         const offset = playerStore.lyricsOffset || 0;
         const t = visualTime.value - offset;
-        if (t >= word.end) return { '--progress': '100%', color: 'var(--md-sys-color-primary)' };
-        if (t < word.start) return { '--progress': '0%', color: 'var(--md-sys-color-on-surface-variant)' };
+        
+        // 使用和经典模式一致的颜色
+        const activeColor = 'var(--md-sys-color-primary)';
+        const inactiveColor = 'color-mix(in srgb, var(--md-sys-color-primary) 40%, rgba(255, 255, 255, 0.1))';
+        
+        if (t >= word.end) {
+            return { 
+                '--progress': '100%',
+                backgroundImage: `linear-gradient(90deg, ${activeColor} 100%, ${inactiveColor} 100%)`
+            };
+        }
+        if (t < word.start) {
+            return { 
+                '--progress': '0%',
+                backgroundImage: `linear-gradient(90deg, ${activeColor} 0%, ${inactiveColor} 0%)`
+            };
+        }
 
         const progress = ((t - word.start) / (word.end - word.start)) * 100;
         return { 
             '--progress': `${progress.toFixed(2)}%`,
-            backgroundImage: `linear-gradient(90deg, var(--md-sys-color-primary) ${progress}%, var(--md-sys-color-on-surface-variant) ${progress}%)`
+            backgroundImage: `linear-gradient(90deg, ${activeColor} ${progress}%, ${inactiveColor} ${progress}%)`
         };
     };
 
@@ -374,8 +389,8 @@ canvas {
 }
 
 .lyric-original {
-  font-size: 36px;
-  font-weight: 500;
+  font-size: 32px;
+  font-weight: bold;
   color: var(--md-sys-color-primary);
   line-height: 1.3;
   transition: all 0.3s ease;
@@ -397,10 +412,9 @@ canvas {
 }
 
 .lyric-translation {
-  font-size: 30px;
+  font-size: 32px;
   color: var(--md-sys-color-primary);
-  font-weight: 500;
-  opacity: 0.7;
+  font-weight: bold;
   /* 限制最多显示2行 */
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -409,6 +423,8 @@ canvas {
 }
 
 .karaoke-word {
+    --inactive-color: color-mix(in srgb, var(--md-sys-color-primary) 40%, rgba(255, 255, 255, 0.1));
+    --active-color: var(--md-sys-color-primary);
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent; 

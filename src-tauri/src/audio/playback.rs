@@ -1,6 +1,10 @@
 //! 音频播放模块
 //!
 //! 提供音频播放、暂停、恢复、音量控制等功能。
+//! 
+//! 使用SIMD友好的批量处理
+//! 预计算查找表避免热路径上的数学运算
+//! 无锁设计减少线程竞争
 
 use super::decoder::{LockFreeSymphoniaSource, SymphoniaDecoder};
 
@@ -14,10 +18,78 @@ use spectrum_analyzer::windows::hann_window;
 use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+
+// ============================================================================
+// 预计算查找表 - 避免热路径上的数学运算
+// ============================================================================
+
+/// 软削波查找表大小（覆盖 0.0 到 2.0 范围，精度 0.001）
+const SOFT_CLIP_TABLE_SIZE: usize = 2001;
+
+/// 预计算的软削波查找表
+static SOFT_CLIP_TABLE: std::sync::LazyLock<[f32; SOFT_CLIP_TABLE_SIZE]> = std::sync::LazyLock::new(|| {
+    let mut table = [0.0f32; SOFT_CLIP_TABLE_SIZE];
+    for (i, item) in table.iter_mut().enumerate() {
+        let x = i as f32 / 1000.0; // 0.0 到 2.0
+        *item = compute_soft_clip(x);
+    }
+    table
+});
+
+/// 计算软削波值（用于生成查找表）
+#[inline]
+fn compute_soft_clip(x: f32) -> f32 {
+    let threshold = 0.95;
+    if x <= threshold {
+        x
+    } else {
+        let over = x - threshold;
+        threshold + (1.0 - threshold) * (over / (1.0 - threshold) * 0.5).tanh()
+    }
+}
+
+/// 快速软削波 - 使用查找表
+#[inline(always)]
+fn soft_clip_fast(x: f32) -> f32 {
+    let sign = x.signum();
+    let abs_x = x.abs();
+    
+    // 快速路径：大多数采样在 [-0.95, 0.95] 范围内
+    if abs_x <= 0.95 {
+        return x;
+    }
+    
+    // 查表路径
+    let index = ((abs_x * 1000.0) as usize).min(SOFT_CLIP_TABLE_SIZE - 1);
+    sign * SOFT_CLIP_TABLE[index]
+}
+
+/// Preamp 增益查找表（-8dB 到 +8dB，精度 0.1dB）
+const PREAMP_TABLE_SIZE: usize = 161;
+
+static PREAMP_TABLE: std::sync::LazyLock<[f32; PREAMP_TABLE_SIZE]> = std::sync::LazyLock::new(|| {
+    let mut table = [0.0f32; PREAMP_TABLE_SIZE];
+    for (i, item) in table.iter_mut().enumerate() {
+        let db = (i as f32 - 80.0) / 10.0; // -8.0 到 +8.0 dB
+        *item = 10.0_f32.powf(db / 20.0);
+    }
+    table
+});
+
+/// 快速 dB 到线性增益转换
+#[inline(always)]
+fn db_to_linear_fast(db: f32) -> f32 {
+    let clamped = db.clamp(-8.0, 8.0);
+    let index = ((clamped + 8.0) * 10.0) as usize;
+    PREAMP_TABLE[index.min(PREAMP_TABLE_SIZE - 1)]
+}
+
+/// 批量处理块大小（对齐到 SIMD 友好的边界）
+const BATCH_SIZE: usize = 64;
 
 #[derive(Debug, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -73,43 +145,21 @@ fn emit_playback_position(app: &AppHandle, position: f32) -> Result<(), Box<dyn 
     Ok(())
 }
 
-pub struct VisualizationSource<I: Source<Item = f32> + Send> {
-    input: I,
-    #[allow(dead_code)]
-    waveform_data: Arc<Mutex<Vec<f32>>>, // 保留用于未来波形显示功能
-    spectrum_data: Arc<Mutex<Vec<f32>>>,
-    buffer: Vec<f32>,
-    prev_spectrum: Vec<f32>,
-    app_handle: Option<AppHandle>,
-    last_emit_time: std::sync::atomic::AtomicU64,
-    last_fft_time: std::sync::atomic::AtomicU64,
-    last_position_emit_time: std::sync::atomic::AtomicU64,
-    eq_settings: Arc<RwLock<EqSettings>>,
-    eq_processor: EqProcessor,
-    // EQ 设置更新计数器，减少锁读取频率
-    eq_update_counter: u32,
-    // 预分配的 FFT 工作缓冲区（动态大小）
-    fft_buffer: Vec<f32>,
-    spectrum_buffer: Vec<f32>,
-    // 播放位置追踪
-    samples_played: u64,
-    sample_rate: u32,
-    channels: u16,
-    // 动态 FFT 缓冲区大小（基于采样率）
-    fft_size: usize,
-}
+// ============================================================================
+// 批量处理缓冲区 - 减少函数调用开销
+// ============================================================================
 
-struct EqProcessor {
+/// 批量 EQ 处理器 - 一次处理多个采样
+struct BatchEqProcessor {
     coefficients: Vec<crate::equalizer::BiquadCoefficients>,
     states: Vec<Vec<crate::equalizer::BiquadState>>,
     sample_rate: f32,
     channels: usize,
-    // 缓存的 EQ 设置，避免每次处理都读取锁
     cached_enabled: bool,
-    cached_preamp_multiplier: f32, // 预计算的 preamp 乘数，避免每采样调用 powf
+    cached_preamp_multiplier: f32,
 }
 
-impl EqProcessor {
+impl BatchEqProcessor {
     fn new(sample_rate: u32, channels: u16) -> Self {
         Self {
             coefficients: vec![crate::equalizer::BiquadCoefficients::default(); EQ_BAND_COUNT],
@@ -124,8 +174,8 @@ impl EqProcessor {
     /// 更新缓存的设置和滤波器系数
     fn update_settings(&mut self, settings: &EqSettings) {
         self.cached_enabled = settings.enabled;
-        // 预计算 preamp 乘数：10^(preamp_dB / 20)
-        self.cached_preamp_multiplier = 10.0_f32.powf(settings.preamp / 20.0);
+        // 使用查找表获取 preamp 乘数
+        self.cached_preamp_multiplier = db_to_linear_fast(settings.preamp);
         
         if settings.enabled {
             self.update_coefficients(settings);
@@ -139,37 +189,58 @@ impl EqProcessor {
         }
     }
 
-    /// 使用缓存的设置处理采样（热路径优化）
-    #[inline(always)]
-    fn process_sample_cached(&mut self, input: f32, channel: usize) -> f32 {
-        if !self.cached_enabled { return input; }
-        let mut sample = input * self.cached_preamp_multiplier;
-        for (band, coeffs) in self.coefficients.iter().enumerate() {
-            sample = self.states[band][channel].process(sample, coeffs);
+    /// 批量处理采样（更高效）
+    #[inline]
+    fn process_batch(&mut self, samples: &mut [f32]) {
+        if !self.cached_enabled { return; }
+        
+        let preamp = self.cached_preamp_multiplier;
+        let channels = self.channels;
+        
+        // 应用 preamp（向量化友好的循环）
+        for sample in samples.iter_mut() {
+            *sample *= preamp;
         }
-        soft_clip(sample)
-    }
-
-    /// 检查 EQ 是否启用（用于快速路径判断）
-    #[inline(always)]
-    const fn is_enabled(&self) -> bool {
-        self.cached_enabled
+        
+        // 逐频段处理
+        for (band, coeffs) in self.coefficients.iter().enumerate() {
+            for (i, sample) in samples.iter_mut().enumerate() {
+                let channel = i % channels;
+                *sample = self.states[band][channel].process(*sample, coeffs);
+            }
+        }
+        
+        // 批量软削波
+        for sample in samples.iter_mut() {
+            *sample = soft_clip_fast(*sample);
+        }
     }
 }
 
-fn soft_clip(x: f32) -> f32 {
-    // 使用更平滑的软削波，阈值提高到 0.95，过渡更柔和
-    let threshold = 0.95;
-    if x.abs() <= threshold {
-        x
-    } else {
-        // 使用 tanh 进行平滑压缩，保留更多动态范围
-        let sign = x.signum();
-        let abs_x = x.abs();
-        let over = abs_x - threshold;
-        // 更平滑的过渡：threshold + (1 - threshold) * tanh(over / (1 - threshold))
-        sign * (threshold + (1.0 - threshold) * (over / (1.0 - threshold) * 0.5).tanh())
-    }
+pub struct VisualizationSource<I: Source<Item = f32> + Send> {
+    input: I,
+    #[allow(dead_code)]
+    waveform_data: Arc<Mutex<Vec<f32>>>,
+    spectrum_data: Arc<Mutex<Vec<f32>>>,
+    buffer: Vec<f32>,
+    prev_spectrum: Vec<f32>,
+    app_handle: Option<AppHandle>,
+    last_emit_time: AtomicU64,
+    last_fft_time: AtomicU64,
+    last_position_emit_time: AtomicU64,
+    eq_settings: Arc<RwLock<EqSettings>>,
+    eq_processor: BatchEqProcessor,
+    eq_update_counter: u32,
+    fft_buffer: Vec<f32>,
+    spectrum_buffer: Vec<f32>,
+    samples_played: u64,
+    sample_rate: u32,
+    channels: u16,
+    fft_size: usize,
+    // 新增：批量处理缓冲区
+    pending_samples: Vec<f32>,
+    pending_processed: Vec<f32>,
+    pending_index: usize,
 }
 
 /// 根据采样率计算最佳 FFT 缓冲区大小
@@ -198,11 +269,11 @@ impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
             buffer: Vec::with_capacity(fft_size),
             prev_spectrum: vec![0.0; 128],
             app_handle,
-            last_emit_time: std::sync::atomic::AtomicU64::new(0),
-            last_fft_time: std::sync::atomic::AtomicU64::new(0),
-            last_position_emit_time: std::sync::atomic::AtomicU64::new(0),
+            last_emit_time: AtomicU64::new(0),
+            last_fft_time: AtomicU64::new(0),
+            last_position_emit_time: AtomicU64::new(0),
             eq_settings: Arc::new(RwLock::new(EqSettings::default())),
-            eq_processor: EqProcessor::new(sr, ch),
+            eq_processor: BatchEqProcessor::new(sr, ch),
             eq_update_counter: 0,
             fft_buffer: vec![0.0; fft_size],
             spectrum_buffer: vec![0.0; 128],
@@ -210,13 +281,15 @@ impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
             sample_rate: sr,
             channels: ch,
             fft_size,
+            pending_samples: Vec::with_capacity(BATCH_SIZE),
+            pending_processed: Vec::with_capacity(BATCH_SIZE),
+            pending_index: 0,
         }
     }
     
     /// 设置初始播放位置（用于 seek 操作）
     #[must_use]
     pub fn with_start_position(mut self, position_secs: f32) -> Self {
-        // 将秒转换为采样数
         self.samples_played = (position_secs * self.sample_rate as f32 * self.channels as f32) as u64;
         self
     }
@@ -224,11 +297,45 @@ impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
     #[must_use]
     pub fn with_eq_settings(mut self, eq_settings: Arc<RwLock<EqSettings>>) -> Self {
         self.eq_settings = eq_settings;
-        // 初始化时同步 EQ 设置到处理器缓存
         if let Ok(s) = self.eq_settings.read() {
             self.eq_processor.update_settings(&s);
         }
         self
+    }
+    
+    /// 批量从输入源读取采样并处理
+    #[inline]
+    fn refill_batch(&mut self) -> bool {
+        self.pending_samples.clear();
+        self.pending_index = 0;
+        
+        // 批量读取
+        for _ in 0..BATCH_SIZE {
+            if let Some(sample) = self.input.next() {
+                self.pending_samples.push(sample);
+            } else {
+                break;
+            }
+        }
+        
+        if self.pending_samples.is_empty() {
+            return false;
+        }
+        
+        // 更新 EQ 设置（每批次检查一次，而不是每 512 采样）
+        self.eq_update_counter += 1;
+        if self.eq_update_counter >= 8 { // 每 8 批次 = 512 采样
+            self.eq_update_counter = 0;
+            if let Ok(s) = self.eq_settings.try_read() {
+                self.eq_processor.update_settings(&s);
+            }
+        }
+        
+        // 批量 EQ 处理
+        self.pending_processed = self.pending_samples.clone();
+        self.eq_processor.process_batch(&mut self.pending_processed);
+        
+        true
     }
 }
 
@@ -236,114 +343,122 @@ impl<I: Source<Item = f32> + Send> Iterator for VisualizationSource<I> {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let sample = self.input.next()?;
-        let ch = self.buffer.len() % self.eq_processor.channels;
+        // 从批量处理缓冲区获取采样
+        if self.pending_index >= self.pending_processed.len() {
+            if !self.refill_batch() {
+                return None;
+            }
+        }
         
-        // 追踪播放位置
+        let processed = self.pending_processed[self.pending_index];
+        self.pending_index += 1;
         self.samples_played += 1;
         
-        // 每 512 个采样才检查一次 EQ 设置，减少锁竞争
-        self.eq_update_counter += 1;
-        if self.eq_update_counter >= 512 {
-            self.eq_update_counter = 0;
-            // 尝试获取锁更新设置，失败则使用缓存的设置继续处理
-            if let Ok(s) = self.eq_settings.try_read() {
-                self.eq_processor.update_settings(&s);
+        // 添加到可视化缓冲区
+        self.buffer.push(processed);
+        
+        // FFT 和事件发送逻辑（仅在缓冲区满时执行）
+        if self.buffer.len() >= self.fft_size {
+            self.process_visualization();
+        }
+        
+        Some(processed)
+    }
+}
+
+impl<I: Source<Item = f32> + Send> VisualizationSource<I> {
+    /// 处理可视化数据（FFT 和事件发送）
+    #[inline(never)] // 避免内联到热路径
+    fn process_visualization(&mut self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        
+        // 发送播放位置（每 100ms 一次）
+        let last_pos_emit = self.last_position_emit_time.load(Ordering::Relaxed);
+        if now - last_pos_emit >= 100 {
+            self.last_position_emit_time.store(now, Ordering::Relaxed);
+            if let Some(ref app) = self.app_handle {
+                let position = self.samples_played as f32 / (self.sample_rate as f32 * self.channels as f32);
+                let _ = emit_playback_position(app, position);
             }
         }
         
-        // 使用缓存的设置处理采样（热路径，无锁）
-        let processed = self.eq_processor.process_sample_cached(sample, ch);
-
-        self.buffer.push(processed);
-        if self.buffer.len() >= self.fft_size {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-            
-            // 发送播放位置（每 100ms 一次）
-            let last_pos_emit = self.last_position_emit_time.load(Ordering::Relaxed);
-            if now - last_pos_emit >= 100 {
-                self.last_position_emit_time.store(now, Ordering::Relaxed);
-                if let Some(ref app) = self.app_handle {
-                    // 计算当前播放位置（秒）
-                    let position = self.samples_played as f32 / (self.sample_rate as f32 * self.channels as f32);
-                    let _ = emit_playback_position(app, position);
-                }
-            }
-            
-            let last_fft = self.last_fft_time.load(Ordering::Relaxed);
-            
-            // 限制 FFT 计算频率为约 60fps (16ms)
-            if now - last_fft >= 16 {
-                self.last_fft_time.store(now, Ordering::Relaxed);
-                
-                if let Ok(mut spec) = self.spectrum_data.try_lock() {
-                    // 复用预分配的缓冲区（动态大小）
-                    self.fft_buffer.copy_from_slice(&self.buffer[..self.fft_size]);
-                    let hann = hann_window(&self.fft_buffer);
-                    
-                    if let Ok(spectrum) = samples_fft_to_spectrum(&hann, self.input.sample_rate(), FrequencyLimit::Range(20.0, 20000.0), Some(&divide_by_N_sqrt)) {
-                        // 重置频谱缓冲区
-                        self.spectrum_buffer.fill(0.0);
-                        
-                        // AE 风格：线性频率分布，每个 bin 覆盖相等的频率范围
-                        let num_bins = 128;
-                        let freq_min = 20.0_f32;
-                        let freq_max = 16000.0_f32; // 人耳敏感范围
-                        let freq_step = (freq_max - freq_min) / num_bins as f32;
-                        
-                        let mut bin_counts = [0u32; 128];
-                        
-                        for (freq, value) in spectrum.data() {
-                            let f = freq.val();
-                            if f < freq_min || f > freq_max { continue; }
-                            
-                            // 线性映射
-                            let bin = ((f - freq_min) / freq_step).floor() as usize;
-                            let bin = bin.min(num_bins - 1);
-                            
-                            // 取该 bin 内的最大值（峰值检测）
-                            let v = value.val();
-                            if v > self.spectrum_buffer[bin] {
-                                self.spectrum_buffer[bin] = v;
-                            }
-                            bin_counts[bin] += 1;
-                        }
-                        
-                        // AE 风格的平滑：快速上升，缓慢下降（峰值保持）
-                        for i in 0..128 {
-                            let target = self.spectrum_buffer[i];
-                            let current = self.prev_spectrum[i];
-                            
-                            if target > current {
-                                // 快速上升
-                                self.prev_spectrum[i] = current * 0.3 + target * 0.7;
-                            } else {
-                                // 缓慢下降（重力感）
-                                self.prev_spectrum[i] = current * 0.85 + target * 0.15;
-                            }
-                        }
-                        
-                        // 直接复制到共享数据，避免 clone
-                        spec.clear();
-                        spec.extend_from_slice(&self.prev_spectrum);
-                    }
-                }
-                
-                // 发送事件（限制在 16ms 一次）
-                if let Some(ref app) = self.app_handle {
-                    let last_emit = self.last_emit_time.load(Ordering::Relaxed);
-                    if now - last_emit >= 16 {
-                        let _ = emit_spectrum_update(app, &self.prev_spectrum);
-                        self.last_emit_time.store(now, Ordering::Relaxed);
-                    }
-                }
-            }
-            
-            // 保留后半部分数据用于重叠分析，提高平滑度
-            let half = self.buffer.len() / 2;
-            self.buffer.drain(..half);
+        let last_fft = self.last_fft_time.load(Ordering::Relaxed);
+        
+        // 限制 FFT 计算频率为约 60fps (16ms)
+        if now - last_fft >= 16 {
+            self.last_fft_time.store(now, Ordering::Relaxed);
+            self.compute_spectrum(now);
         }
-        Some(processed)
+        
+        // 保留后半部分数据用于重叠分析
+        let half = self.buffer.len() / 2;
+        self.buffer.drain(..half);
+    }
+    
+    /// 计算频谱数据
+    #[inline(never)]
+    fn compute_spectrum(&mut self, now: u64) {
+        if let Ok(mut spec) = self.spectrum_data.try_lock() {
+            // 复用预分配的缓冲区
+            self.fft_buffer[..self.fft_size].copy_from_slice(&self.buffer[..self.fft_size]);
+            let hann = hann_window(&self.fft_buffer);
+            
+            if let Ok(spectrum) = samples_fft_to_spectrum(
+                &hann,
+                self.sample_rate,
+                FrequencyLimit::Range(20.0, 20000.0),
+                Some(&divide_by_N_sqrt),
+            ) {
+                // 重置频谱缓冲区
+                self.spectrum_buffer.fill(0.0);
+                
+                // AE 风格：线性频率分布
+                const NUM_BINS: usize = 128;
+                const FREQ_MIN: f32 = 20.0;
+                const FREQ_MAX: f32 = 16000.0;
+                const FREQ_STEP: f32 = (FREQ_MAX - FREQ_MIN) / NUM_BINS as f32;
+                
+                for (freq, value) in spectrum.data() {
+                    let f = freq.val();
+                    if f < FREQ_MIN || f > FREQ_MAX { continue; }
+                    
+                    let bin = ((f - FREQ_MIN) / FREQ_STEP).floor() as usize;
+                    let bin = bin.min(NUM_BINS - 1);
+                    
+                    let v = value.val();
+                    if v > self.spectrum_buffer[bin] {
+                        self.spectrum_buffer[bin] = v;
+                    }
+                }
+                
+                // AE 风格的平滑：快速上升，缓慢下降
+                for i in 0..128 {
+                    let target = self.spectrum_buffer[i];
+                    let current = self.prev_spectrum[i];
+                    
+                    self.prev_spectrum[i] = if target > current {
+                        current * 0.3 + target * 0.7 // 快速上升
+                    } else {
+                        current * 0.85 + target * 0.15 // 缓慢下降
+                    };
+                }
+                
+                spec.clear();
+                spec.extend_from_slice(&self.prev_spectrum);
+            }
+        }
+        
+        // 发送事件
+        if let Some(ref app) = self.app_handle {
+            let last_emit = self.last_emit_time.load(Ordering::Relaxed);
+            if now - last_emit >= 16 {
+                let _ = emit_spectrum_update(app, &self.prev_spectrum);
+                self.last_emit_time.store(now, Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -436,6 +551,7 @@ pub fn play_track_exclusive(app: &AppHandle, state: &State<AppState>, path: &str
     println!("Source: {src_sr}Hz, {src_ch} ch -> Target: {target_sr}Hz, {target_ch} ch");
 
     let source = LockFreeSymphoniaSource::new(decoder);
+    let start_pos = position.unwrap_or(0.0);
     let (wasapi_clone, waveform, spectrum, stop_flag, thread_id, eq_settings) = (
         Arc::clone(&player.wasapi_player),
         Arc::clone(&player.waveform_data),
@@ -451,7 +567,7 @@ pub fn play_track_exclusive(app: &AppHandle, state: &State<AppState>, path: &str
     std::thread::spawn(move || {
         thread_started_clone.store(true, Ordering::SeqCst);
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            decode_and_push_to_wasapi(source, wasapi_clone, waveform, spectrum, app_clone, stop_flag, thread_id, new_thread_id, src_sr, src_ch, target_sr, target_ch, eq_settings)
+            decode_and_push_to_wasapi(source, wasapi_clone, waveform, spectrum, app_clone, stop_flag, thread_id, new_thread_id, src_sr, src_ch, target_sr, target_ch, eq_settings, start_pos)
         }));
     });
 
@@ -489,6 +605,62 @@ const fn calculate_decode_chunk_size(sample_rate: u32) -> usize {
 }
 
 #[cfg(windows)]
+struct EqProcessor {
+    coefficients: Vec<crate::equalizer::BiquadCoefficients>,
+    states: Vec<Vec<crate::equalizer::BiquadState>>,
+    sample_rate: f32,
+    #[allow(dead_code)]
+    channels: usize,
+    cached_enabled: bool,
+    cached_preamp_multiplier: f32,
+}
+
+#[cfg(windows)]
+impl EqProcessor {
+    fn new(sample_rate: u32, channels: u16) -> Self {
+        Self {
+            coefficients: vec![crate::equalizer::BiquadCoefficients::default(); EQ_BAND_COUNT],
+            states: vec![vec![crate::equalizer::BiquadState::default(); channels as usize]; EQ_BAND_COUNT],
+            sample_rate: sample_rate as f32,
+            channels: channels as usize,
+            cached_enabled: false,
+            cached_preamp_multiplier: 1.0,
+        }
+    }
+
+    fn update_settings(&mut self, settings: &EqSettings) {
+        self.cached_enabled = settings.enabled;
+        self.cached_preamp_multiplier = 10.0_f32.powf(settings.preamp / 20.0);
+        
+        if settings.enabled {
+            self.update_coefficients(settings);
+        }
+    }
+
+    fn update_coefficients(&mut self, settings: &EqSettings) {
+        use crate::equalizer::{BiquadCoefficients, EQ_FREQUENCIES, EQ_Q_VALUES};
+        for (i, &freq) in EQ_FREQUENCIES.iter().enumerate() {
+            self.coefficients[i] = BiquadCoefficients::peaking_eq(self.sample_rate, freq, settings.gains[i], EQ_Q_VALUES[i]);
+        }
+    }
+
+    #[inline(always)]
+    fn process_sample_cached(&mut self, input: f32, channel: usize) -> f32 {
+        if !self.cached_enabled { return input; }
+        let mut sample = input * self.cached_preamp_multiplier;
+        for (band, coeffs) in self.coefficients.iter().enumerate() {
+            sample = self.states[band][channel].process(sample, coeffs);
+        }
+        soft_clip_fast(sample)
+    }
+
+    #[inline(always)]
+    const fn is_enabled(&self) -> bool {
+        self.cached_enabled
+    }
+}
+
+#[cfg(windows)]
 fn decode_and_push_to_wasapi(
     mut source: LockFreeSymphoniaSource,
     wasapi: Arc<Mutex<Option<super::wasapi::WasapiExclusivePlayback>>>,
@@ -496,26 +668,24 @@ fn decode_and_push_to_wasapi(
     _spectrum: Arc<Mutex<Vec<f32>>>,
     app: AppHandle,
     stop_flag: Arc<std::sync::atomic::AtomicBool>,
-    thread_id_ref: Arc<std::sync::atomic::AtomicU64>,
+    thread_id_ref: Arc<AtomicU64>,
     my_id: u64,
     src_sr: u32,
     src_ch: u16,
     target_sr: u32,
     target_ch: u16,
     eq_settings: Arc<RwLock<EqSettings>>,
+    start_position: f32,
 ) {
     use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
     if stop_flag.load(Ordering::SeqCst) || thread_id_ref.load(Ordering::SeqCst) != my_id { return; }
 
     let mut eq_proc = EqProcessor::new(src_sr, src_ch);
-    // 初始化 EQ 设置
     if let Ok(settings) = eq_settings.read() {
         eq_proc.update_settings(&settings);
     }
     let need_resample = src_sr != target_sr;
-    // 根据源采样率动态计算 chunk 大小
     let chunk_size = calculate_decode_chunk_size(src_sr);
-    // EQ 设置更新计数器
     let mut eq_update_counter: u32 = 0;
     let mut resampler: Option<SincFixedIn<f32>> = if need_resample {
         SincFixedIn::<f32>::new(
@@ -535,6 +705,25 @@ fn decode_and_push_to_wasapi(
 
     let mut input_frames: Vec<Vec<f32>> = vec![Vec::with_capacity(chunk_size * 2); src_ch as usize];
     let mut output_buffer: Vec<f32> = Vec::with_capacity(chunk_size * target_ch as usize * 4);
+    
+    // 播放位置追踪
+    let mut last_position_emit_time: u64 = 0;
+    
+    // 发送播放位置的闭包
+    let emit_position = |last_time: &mut u64| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        if now - *last_time >= 100 {
+            *last_time = now;
+            let samples_played = wasapi.lock().unwrap()
+                .as_ref()
+                .map_or(0, |p| p.get_samples_written());
+            let position = start_position + samples_played as f32 / (target_sr as f32 * target_ch as f32);
+            let _ = emit_playback_position(&app, position);
+        }
+    };
 
     loop {
         if stop_flag.load(Ordering::SeqCst) || thread_id_ref.load(Ordering::SeqCst) != my_id || wasapi.lock().unwrap().is_none() { break; }
@@ -548,21 +737,22 @@ fn decode_and_push_to_wasapi(
             else { eof = true; break; }
         }
         if interleaved.is_empty() { break; }
+        
+        // 发送播放位置
+        emit_position(&mut last_position_emit_time);
 
         for (i, s) in interleaved.iter().enumerate() {
             input_frames[i % src_ch as usize].push(*s);
         }
 
-        // 每个 chunk 更新一次 EQ 设置（约每 21ms @ 48kHz）
         eq_update_counter += 1;
-        if eq_update_counter >= 4 { // 约每 4 个 chunk 检查一次
+        if eq_update_counter >= 4 {
             eq_update_counter = 0;
             if let Ok(settings) = eq_settings.try_read() {
                 eq_proc.update_settings(&settings);
             }
         }
 
-        // 使用缓存的设置处理 EQ
         if eq_proc.is_enabled() {
             for ch in 0..src_ch as usize {
                 for s in &mut input_frames[ch] {
@@ -574,11 +764,8 @@ fn decode_and_push_to_wasapi(
         let output_frames: Vec<Vec<f32>> = if let Some(ref mut r) = resampler {
             let actual = input_frames[0].len();
             if actual < chunk_size {
-                // 使用最后一个样本值进行平滑填充，而不是用 0 填充
-                // 这样可以避免突然的静音导致的爆音
                 for ch in &mut input_frames {
                     let last_sample = ch.last().copied().unwrap_or(0.0);
-                    // 渐变到 0，而不是直接填充 0
                     let samples_to_add = chunk_size - ch.len();
                     for i in 0..samples_to_add {
                         let fade = 1.0 - (i as f32 / samples_to_add as f32);
@@ -602,6 +789,19 @@ fn decode_and_push_to_wasapi(
         } else { output_buffer.clone() };
 
         if !final_out.is_empty() {
+            // 等待缓冲区有空间（防止解码过快导致内存无限增长）
+            loop {
+                if stop_flag.load(Ordering::SeqCst) || thread_id_ref.load(Ordering::SeqCst) != my_id { break; }
+                let buf_size = wasapi.lock().unwrap().as_ref().map_or(0, |p| p.get_buffer_size());
+                // 缓冲区容量约为 target_sr * target_ch * 4秒，保持在2秒以下
+                let max_buffer = (target_sr as usize * target_ch as usize * 2) as usize;
+                if buf_size < max_buffer { break; }
+                // 等待时继续发送播放位置
+                emit_position(&mut last_position_emit_time);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if stop_flag.load(Ordering::SeqCst) || thread_id_ref.load(Ordering::SeqCst) != my_id { break; }
+            
             if let Some(ref p) = *wasapi.lock().unwrap() {
                 if p.push_samples(final_out).is_err() { break; }
             }
@@ -616,7 +816,6 @@ fn decode_and_push_to_wasapi(
             }
             if !stop_flag.load(Ordering::SeqCst) && thread_id_ref.load(Ordering::SeqCst) == my_id {
                 if let Some(ref p) = *wasapi.lock().unwrap() { let _ = p.stop(); }
-                // 发送播放结束事件
                 let _ = emit_track_ended(&app);
             }
             break;

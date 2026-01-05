@@ -6,7 +6,7 @@
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -53,6 +53,8 @@ pub struct WasapiExclusivePlayback {
     volume: Arc<Mutex<f32>>,
     is_running: Arc<AtomicBool>,
     sample_buffer: Arc<(Mutex<VecDeque<f32>>, Condvar)>,
+    /// 已写入硬件的采样数（用于计算播放位置）
+    samples_written: Arc<AtomicU64>,
 }
 
 /// 根据采样率和声道数计算 WASAPI 缓冲区容量
@@ -74,6 +76,7 @@ impl WasapiExclusivePlayback {
         let state = Arc::new(Mutex::new(PlaybackState::Uninitialized));
         let volume = Arc::new(Mutex::new(1.0f32));
         let is_running = Arc::new(AtomicBool::new(true));
+        let samples_written = Arc::new(AtomicU64::new(0));
         // 初始使用默认 48kHz 立体声的缓冲区大小，初始化后会调整
         let initial_capacity = calculate_wasapi_buffer_capacity(48000, 2);
         let sample_buffer = Arc::new((Mutex::new(VecDeque::with_capacity(initial_capacity)), Condvar::new()));
@@ -82,9 +85,10 @@ impl WasapiExclusivePlayback {
         let volume_clone = Arc::clone(&volume);
         let is_running_clone = Arc::clone(&is_running);
         let sample_buffer_clone = Arc::clone(&sample_buffer);
+        let samples_written_clone = Arc::clone(&samples_written);
 
         let audio_thread = thread::spawn(move || {
-            audio_thread_main(command_rx, response_tx, state_clone, volume_clone, is_running_clone, sample_buffer_clone);
+            audio_thread_main(command_rx, response_tx, state_clone, volume_clone, is_running_clone, sample_buffer_clone, samples_written_clone);
         });
 
         Self {
@@ -97,6 +101,7 @@ impl WasapiExclusivePlayback {
             volume,
             is_running,
             sample_buffer,
+            samples_written,
         }
     }
 
@@ -170,6 +175,7 @@ impl WasapiExclusivePlayback {
     pub fn clear_buffer(&self) -> Result<(), String> {
         let (buffer, _) = &*self.sample_buffer;
         buffer.lock().unwrap().clear();
+        self.samples_written.store(0, Ordering::SeqCst);
         Ok(())
     }
 
@@ -191,6 +197,17 @@ impl WasapiExclusivePlayback {
     #[must_use]
     pub fn get_volume(&self) -> f32 {
         *self.volume.lock().unwrap()
+    }
+
+    /// 获取已写入硬件的采样数
+    #[must_use]
+    pub fn get_samples_written(&self) -> u64 {
+        self.samples_written.load(Ordering::SeqCst)
+    }
+
+    /// 重置已写入采样计数器
+    pub fn reset_samples_written(&self) {
+        self.samples_written.store(0, Ordering::SeqCst);
     }
 
     #[must_use]
@@ -225,6 +242,7 @@ fn audio_thread_main(
     _volume: Arc<Mutex<f32>>,
     is_running: Arc<AtomicBool>,
     sample_buffer: Arc<(Mutex<VecDeque<f32>>, Condvar)>,
+    samples_written: Arc<AtomicU64>,
 ) {
     let _ = wasapi::initialize_mta();
 
@@ -303,6 +321,7 @@ fn audio_thread_main(
                 current_volume,
                 &mut is_playing,
                 &state,
+                &samples_written,
             );
         } else {
             thread::sleep(Duration::from_millis(10));
@@ -373,6 +392,7 @@ fn process_audio_output(
     current_volume: f32,
     is_playing: &mut bool,
     state: &Arc<Mutex<PlaybackState>>,
+    samples_written: &Arc<AtomicU64>,
 ) {
     if let (Some(client), Some(rc), Some(eh)) = (audio_client, render_client, event_handle) {
         if eh.wait_for_event(10).is_ok() {
@@ -390,7 +410,10 @@ fn process_audio_output(
 
                     let output_bytes = convert_samples_to_bytes(&output_samples, current_bits, current_sample_type_is_float);
 
-                    if rc.write_to_device(frames_available as usize, &output_bytes, None).is_err() {
+                    if rc.write_to_device(frames_available as usize, &output_bytes, None).is_ok() {
+                        // 更新已写入硬件的采样数
+                        samples_written.fetch_add(samples_needed as u64, Ordering::SeqCst);
+                    } else {
                         *is_playing = false;
                         *state.lock().unwrap() = PlaybackState::Stopped;
                     }
