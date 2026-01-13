@@ -16,6 +16,14 @@ import type { TonalVariants, HarmonyColors, ThemePreference } from '@/types'
 const customStyleCache = new Map<string, string>()
 let customStyleElement: HTMLStyleElement | null = null
 
+// 检测是否为中性灰色（低饱和度）
+function isNeutralGray(hexColor: string): boolean {
+  const argb = argbFromHex(hexColor)
+  const hct = Hct.fromInt(argb)
+  // MD3 的 neutral palette 使用 chroma 4-8，低于 15 视为灰色
+  return hct.chroma < 15
+}
+
 // 辅助函数：从 HEX 颜色生成色调变体
 function generateTonalVariants(hexColor: string): TonalVariants {
   const argb = argbFromHex(hexColor)
@@ -47,96 +55,84 @@ function generateHarmonyColors(hexColor: string): HarmonyColors {
   }
 }
 
+// 为灰色主题生成 MD3 风格的颜色系统
+function generateGrayThemeColors(hexColor: string, isDark: boolean) {
+  const hct = Hct.fromInt(argbFromHex(hexColor))
+  const hue = hct.hue
+  
+  // 使用 MD3 neutral palette 的 chroma 值，但保持用户选择的色相
+  const primaryPalette = TonalPalette.fromHueAndChroma(hue, 8)      // 稍高于 neutral variant
+  const secondaryPalette = TonalPalette.fromHueAndChroma(hue, 6)    // 介于 n1 和 n2 之间
+  const tertiaryPalette = TonalPalette.fromHueAndChroma(hue, 4)     // 等于 neutral
+  const neutralPalette = TonalPalette.fromHueAndChroma(hue, 4)
+  const neutralVariantPalette = TonalPalette.fromHueAndChroma(hue, 8)
+  
+  if (isDark) {
+    return {
+      primary: hexFromArgb(primaryPalette.tone(80)),
+      onPrimary: hexFromArgb(primaryPalette.tone(20)),
+      primaryContainer: hexFromArgb(primaryPalette.tone(30)),
+      onPrimaryContainer: hexFromArgb(primaryPalette.tone(90)),
+      secondary: hexFromArgb(secondaryPalette.tone(80)),
+      onSecondary: hexFromArgb(secondaryPalette.tone(20)),
+      secondaryContainer: hexFromArgb(secondaryPalette.tone(30)),
+      onSecondaryContainer: hexFromArgb(secondaryPalette.tone(90)),
+      tertiary: hexFromArgb(tertiaryPalette.tone(80)),
+      onTertiary: hexFromArgb(tertiaryPalette.tone(20)),
+      tertiaryContainer: hexFromArgb(tertiaryPalette.tone(30)),
+      onTertiaryContainer: hexFromArgb(tertiaryPalette.tone(90)),
+      surface: hexFromArgb(neutralPalette.tone(6)),
+      onSurface: hexFromArgb(neutralPalette.tone(90)),
+      surfaceVariant: hexFromArgb(neutralVariantPalette.tone(30)),
+      onSurfaceVariant: hexFromArgb(neutralVariantPalette.tone(80)),
+      background: hexFromArgb(neutralPalette.tone(6)),
+      onBackground: hexFromArgb(neutralPalette.tone(90)),
+      outline: hexFromArgb(neutralVariantPalette.tone(60)),
+      outlineVariant: hexFromArgb(neutralVariantPalette.tone(30)),
+    }
+  } else {
+    return {
+      primary: hexFromArgb(primaryPalette.tone(40)),
+      onPrimary: hexFromArgb(primaryPalette.tone(100)),
+      primaryContainer: hexFromArgb(primaryPalette.tone(90)),
+      onPrimaryContainer: hexFromArgb(primaryPalette.tone(10)),
+      secondary: hexFromArgb(secondaryPalette.tone(40)),
+      onSecondary: hexFromArgb(secondaryPalette.tone(100)),
+      secondaryContainer: hexFromArgb(secondaryPalette.tone(90)),
+      onSecondaryContainer: hexFromArgb(secondaryPalette.tone(10)),
+      tertiary: hexFromArgb(tertiaryPalette.tone(40)),
+      onTertiary: hexFromArgb(tertiaryPalette.tone(100)),
+      tertiaryContainer: hexFromArgb(tertiaryPalette.tone(90)),
+      onTertiaryContainer: hexFromArgb(tertiaryPalette.tone(10)),
+      surface: hexFromArgb(neutralPalette.tone(98)),
+      onSurface: hexFromArgb(neutralPalette.tone(10)),
+      surfaceVariant: hexFromArgb(neutralVariantPalette.tone(90)),
+      onSurfaceVariant: hexFromArgb(neutralVariantPalette.tone(30)),
+      background: hexFromArgb(neutralPalette.tone(98)),
+      onBackground: hexFromArgb(neutralPalette.tone(10)),
+      outline: hexFromArgb(neutralVariantPalette.tone(50)),
+      outlineVariant: hexFromArgb(neutralVariantPalette.tone(80)),
+    }
+  }
+}
+
 // 生成自定义 CSS 变量
 function generateCustomCSS(primaryColor: string, isDark: boolean, enableGlass: boolean, enableGradients: boolean): string {
   const primaryHct = Hct.fromInt(argbFromHex(primaryColor))
   const isLightColor = primaryHct.tone > 50
-  const primaryPalette = TonalPalette.fromHct(primaryHct)
   
-  // 检测是否为深灰色/中性色（色度低，接近灰色）
-  // 或者检查 RGB 值是否接近（差值小于 20 认为是灰色）
-  const rgb = {
-    r: (argbFromHex(primaryColor) >> 16) & 0xFF,
-    g: (argbFromHex(primaryColor) >> 8) & 0xFF,
-    b: argbFromHex(primaryColor) & 0xFF
-  }
-  const rgbDiff = Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b)
-  const isNeutralGray = primaryHct.chroma < 15 || rgbDiff < 20
-  
-  // 计算 on-primary 和 container 颜色
-  // 对于深灰色主题，在暗色模式下需要特殊处理
-  let effectivePrimaryColor = primaryColor
-  let effectivePrimaryHct = primaryHct
-  let effectivePalette = primaryPalette
-  
-  if (isNeutralGray && isDark) {
-    // 在暗色模式下，深灰色需要稍微调亮以确保可见性
-    // 如果原始 tone 太暗（< 30），调整到 40-50 左右
-    const adjustedTone = primaryHct.tone < 30 ? Math.min(primaryHct.tone + 25, 50) : primaryHct.tone
-    effectivePrimaryHct = Hct.from(primaryHct.hue, primaryHct.chroma, adjustedTone)
-    effectivePrimaryColor = hexFromArgb(effectivePrimaryHct.toInt())
-    effectivePalette = TonalPalette.fromHct(effectivePrimaryHct)
-  }
-  
-  const onPrimaryColor = effectivePrimaryHct.tone > 50 ? '#000000' : '#ffffff'
-  // 在暗色模式下，container 应该比 primary 稍暗；在亮色模式下，container 应该比 primary 稍亮
-  const containerTone = isDark 
-    ? (isNeutralGray ? Math.max(effectivePrimaryHct.tone - 10, 20) : 30)
-    : 90
-  const onContainerTone = isDark ? 90 : 10
-  const containerColor = hexFromArgb(effectivePalette.tone(containerTone))
-  const onContainerColor = hexFromArgb(effectivePalette.tone(onContainerTone))
-  
-  // 生成色调变体和和谐色（使用有效的 primary 颜色）
-  const tones = generateTonalVariants(effectivePrimaryColor)
-  const harmony = generateHarmonyColors(effectivePrimaryColor)
+  // 生成色调变体和和谐色
+  const tones = generateTonalVariants(primaryColor)
+  const harmony = generateHarmonyColors(primaryColor)
   const accentTones = generateTonalVariants(harmony.complementary)
   
-  // 如果是深灰色，生成灰色系的 secondary 和 tertiary
-  let secondaryColor = effectivePrimaryColor
-  let tertiaryColor = effectivePrimaryColor
-  if (isNeutralGray) {
-    // 使用相同色调但稍微不同的亮度作为 secondary 和 tertiary
-    const secondaryTone = isDark 
-      ? Math.min(effectivePrimaryHct.tone + 5, 60)
-      : Math.max(effectivePrimaryHct.tone - 5, 0)
-    const tertiaryTone = isDark 
-      ? Math.min(effectivePrimaryHct.tone + 10, 65)
-      : Math.max(effectivePrimaryHct.tone - 10, 0)
-    secondaryColor = hexFromArgb(Hct.from(effectivePrimaryHct.hue, effectivePrimaryHct.chroma, secondaryTone).toInt())
-    tertiaryColor = hexFromArgb(Hct.from(effectivePrimaryHct.hue, effectivePrimaryHct.chroma, tertiaryTone).toInt())
-  }
+  const onPrimaryColor = isLightColor ? '#000000' : '#ffffff'
   
   let css = ''
   
-  // 覆盖 primary 相关颜色（使用有效的 primary 颜色）
-  css += `--md-sys-color-primary: ${effectivePrimaryColor};\n`
-  css += `--md-sys-color-on-primary: ${onPrimaryColor};\n`
-  css += `--md-sys-color-primary-container: ${containerColor};\n`
-  css += `--md-sys-color-on-primary-container: ${onContainerColor};\n`
-  
-  // 如果是深灰色，强制覆盖 secondary 和 tertiary 为灰色系
-  if (isNeutralGray) {
-    const secondaryPalette = TonalPalette.fromHct(Hct.fromInt(argbFromHex(secondaryColor)))
-    const tertiaryPalette = TonalPalette.fromHct(Hct.fromInt(argbFromHex(tertiaryColor)))
-    const secondaryContainerTone = isDark ? 30 : 90
-    const tertiaryContainerTone = isDark ? 30 : 90
-    
-    css += `--md-sys-color-secondary: ${secondaryColor};\n`
-    css += `--md-sys-color-on-secondary: ${isLightColor ? '#000000' : '#ffffff'};\n`
-    css += `--md-sys-color-secondary-container: ${hexFromArgb(secondaryPalette.tone(secondaryContainerTone))};\n`
-    css += `--md-sys-color-on-secondary-container: ${hexFromArgb(secondaryPalette.tone(isDark ? 90 : 10))};\n`
-    
-    css += `--md-sys-color-tertiary: ${tertiaryColor};\n`
-    css += `--md-sys-color-on-tertiary: ${isLightColor ? '#000000' : '#ffffff'};\n`
-    css += `--md-sys-color-tertiary-container: ${hexFromArgb(tertiaryPalette.tone(tertiaryContainerTone))};\n`
-    css += `--md-sys-color-on-tertiary-container: ${hexFromArgb(tertiaryPalette.tone(isDark ? 90 : 10))};\n`
-  }
-  
-  // 主题源颜色（使用有效的 primary 颜色）
-  css += `--theme-source-color: ${effectivePrimaryColor};\n`
+  // 主题源颜色
+  css += `--theme-source-color: ${primaryColor};\n`
   css += `--theme-on-primary: ${onPrimaryColor};\n`
-  css += `--theme-on-primary-container: ${onContainerColor};\n`
   
   // 主色调变体
   for (const [key, value] of Object.entries(tones)) {
@@ -161,11 +157,11 @@ function generateCustomCSS(primaryColor: string, isDark: boolean, enableGlass: b
   css += `--shadow-medium: 0 8px 30px rgba(0, 0, 0, ${shadowAlpha[1]});\n`
   css += `--shadow-strong: 0 12px 40px rgba(0, 0, 0, ${shadowAlpha[2]});\n`
   
-  // 主色透明度变体（使用有效的 primary 颜色）
-  css += `--primary-alpha-5: color-mix(in srgb, ${effectivePrimaryColor} 5%, transparent);\n`
-  css += `--primary-alpha-10: color-mix(in srgb, ${effectivePrimaryColor} 10%, transparent);\n`
-  css += `--primary-alpha-20: color-mix(in srgb, ${effectivePrimaryColor} 20%, transparent);\n`
-  css += `--primary-alpha-30: color-mix(in srgb, ${effectivePrimaryColor} 30%, transparent);\n`
+  // 主色透明度变体
+  css += `--primary-alpha-5: color-mix(in srgb, var(--md-sys-color-primary) 5%, transparent);\n`
+  css += `--primary-alpha-10: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);\n`
+  css += `--primary-alpha-20: color-mix(in srgb, var(--md-sys-color-primary) 20%, transparent);\n`
+  css += `--primary-alpha-30: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent);\n`
   
   // 玻璃态效果
   if (enableGlass) {
@@ -264,29 +260,40 @@ export const useThemeStore = defineStore('theme', {
     },
 
     applyTheme(): void {
-      // 对于深灰色主题，在暗色模式下需要调整颜色以确保可见性
-      let effectivePrimaryColor = this.primaryColor
-      const primaryHct = Hct.fromInt(argbFromHex(this.primaryColor))
-      const rgb = {
-        r: (argbFromHex(this.primaryColor) >> 16) & 0xFF,
-        g: (argbFromHex(this.primaryColor) >> 8) & 0xFF,
-        b: argbFromHex(this.primaryColor) & 0xFF
-      }
-      const rgbDiff = Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b)
-      const isNeutralGray = primaryHct.chroma < 15 || rgbDiff < 20
+      const isGray = isNeutralGray(this.primaryColor)
       
-      if (isNeutralGray && this.isDarkMode && primaryHct.tone < 30) {
-        // 在暗色模式下，深灰色需要稍微调亮以确保可见性
-        const adjustedTone = Math.min(primaryHct.tone + 25, 50)
-        const adjustedHct = Hct.from(primaryHct.hue, primaryHct.chroma, adjustedTone)
-        effectivePrimaryColor = hexFromArgb(adjustedHct.toInt())
-      }
-      
-      // 1. 使用 Material Design 库设置基础颜色（使用调整后的颜色）
-      const theme = themeFromSourceColor(argbFromHex(effectivePrimaryColor))
+      // 1. 使用 MD3 库设置基础颜色
+      const theme = themeFromSourceColor(argbFromHex(this.primaryColor))
       applyTheme(theme, { target: document.documentElement, dark: this.isDarkMode })
       
-      // 2. 生成并应用自定义 CSS（覆盖和扩展）
+      // 2. 如果是灰色，覆盖 MD3 生成的彩色为真正的灰色
+      if (isGray) {
+        const grayColors = generateGrayThemeColors(this.primaryColor, this.isDarkMode)
+        const root = document.documentElement
+        
+        root.style.setProperty('--md-sys-color-primary', grayColors.primary)
+        root.style.setProperty('--md-sys-color-on-primary', grayColors.onPrimary)
+        root.style.setProperty('--md-sys-color-primary-container', grayColors.primaryContainer)
+        root.style.setProperty('--md-sys-color-on-primary-container', grayColors.onPrimaryContainer)
+        root.style.setProperty('--md-sys-color-secondary', grayColors.secondary)
+        root.style.setProperty('--md-sys-color-on-secondary', grayColors.onSecondary)
+        root.style.setProperty('--md-sys-color-secondary-container', grayColors.secondaryContainer)
+        root.style.setProperty('--md-sys-color-on-secondary-container', grayColors.onSecondaryContainer)
+        root.style.setProperty('--md-sys-color-tertiary', grayColors.tertiary)
+        root.style.setProperty('--md-sys-color-on-tertiary', grayColors.onTertiary)
+        root.style.setProperty('--md-sys-color-tertiary-container', grayColors.tertiaryContainer)
+        root.style.setProperty('--md-sys-color-on-tertiary-container', grayColors.onTertiaryContainer)
+        root.style.setProperty('--md-sys-color-surface', grayColors.surface)
+        root.style.setProperty('--md-sys-color-on-surface', grayColors.onSurface)
+        root.style.setProperty('--md-sys-color-surface-variant', grayColors.surfaceVariant)
+        root.style.setProperty('--md-sys-color-on-surface-variant', grayColors.onSurfaceVariant)
+        root.style.setProperty('--md-sys-color-background', grayColors.background)
+        root.style.setProperty('--md-sys-color-on-background', grayColors.onBackground)
+        root.style.setProperty('--md-sys-color-outline', grayColors.outline)
+        root.style.setProperty('--md-sys-color-outline-variant', grayColors.outlineVariant)
+      }
+      
+      // 3. 生成并应用自定义 CSS
       const cacheKey = `${this.primaryColor}-${this.isDarkMode}-${this.enableGlassEffect}-${this.enableGradients}`
       
       if (!customStyleCache.has(cacheKey)) {
@@ -298,96 +305,29 @@ export const useThemeStore = defineStore('theme', {
         )
         customStyleCache.set(cacheKey, customCSS)
         
-        // 限制缓存大小
         if (customStyleCache.size > 20) {
           const firstKey = customStyleCache.keys().next().value
           if (firstKey) customStyleCache.delete(firstKey)
         }
       }
       
-      // 创建或更新自定义 style 元素
       if (!customStyleElement) {
         customStyleElement = document.createElement('style')
         customStyleElement.id = 'theme-custom-variables'
         document.head.appendChild(customStyleElement)
       }
       
-      // 使用 :root 选择器，确保覆盖 MD3 生成的颜色
       customStyleElement.textContent = `:root {\n${customStyleCache.get(cacheKey)}}`
       
-      // 对于深灰色主题，额外确保覆盖所有相关颜色（使用已声明的变量）
-      if (isNeutralGray) {
-        // 在暗色模式下，深灰色需要稍微调亮以确保可见性
-        let effectivePrimaryHct = primaryHct
-        if (this.isDarkMode && primaryHct.tone < 30) {
-          const adjustedTone = Math.min(primaryHct.tone + 25, 50)
-          effectivePrimaryHct = Hct.from(primaryHct.hue, primaryHct.chroma, adjustedTone)
-        }
-        
-        // 生成灰色系的 container 颜色
-        const effectivePalette = TonalPalette.fromHct(effectivePrimaryHct)
-        const containerTone = this.isDarkMode 
-          ? Math.max(effectivePrimaryHct.tone - 10, 20)
-          : 90
-        const onContainerTone = this.isDarkMode ? 90 : 10
-        const containerColor = hexFromArgb(effectivePalette.tone(containerTone))
-        const onContainerColor = hexFromArgb(effectivePalette.tone(onContainerTone))
-        
-        // 生成 secondary 和 tertiary 的灰色变体
-        const secondaryTone = this.isDarkMode 
-          ? Math.min(effectivePrimaryHct.tone + 5, 60)
-          : Math.max(effectivePrimaryHct.tone - 5, 0)
-        const tertiaryTone = this.isDarkMode 
-          ? Math.min(effectivePrimaryHct.tone + 10, 65)
-          : Math.max(effectivePrimaryHct.tone - 10, 0)
-        const effectivePrimaryColor = hexFromArgb(effectivePrimaryHct.toInt())
-        const secondaryColor = hexFromArgb(Hct.from(effectivePrimaryHct.hue, effectivePrimaryHct.chroma, secondaryTone).toInt())
-        const tertiaryColor = hexFromArgb(Hct.from(effectivePrimaryHct.hue, effectivePrimaryHct.chroma, tertiaryTone).toInt())
-        const secondaryPalette = TonalPalette.fromHct(Hct.fromInt(argbFromHex(secondaryColor)))
-        const tertiaryPalette = TonalPalette.fromHct(Hct.fromInt(argbFromHex(tertiaryColor)))
-        const secondaryContainerColor = hexFromArgb(secondaryPalette.tone(containerTone))
-        const tertiaryContainerColor = hexFromArgb(tertiaryPalette.tone(containerTone))
-        const onSecondaryContainerColor = hexFromArgb(secondaryPalette.tone(onContainerTone))
-        const onTertiaryContainerColor = hexFromArgb(tertiaryPalette.tone(onContainerTone))
-        
-        // 强制覆盖所有可能的 MD3 颜色变体为灰色系
-        const overrideCSS = `
-          :root {
-            --md-sys-color-primary: ${effectivePrimaryColor} !important;
-            --md-sys-color-on-primary: ${effectivePrimaryHct.tone > 50 ? '#000000' : '#ffffff'} !important;
-            --md-sys-color-primary-container: ${containerColor} !important;
-            --md-sys-color-on-primary-container: ${onContainerColor} !important;
-            --md-sys-color-secondary: ${secondaryColor} !important;
-            --md-sys-color-on-secondary: ${effectivePrimaryHct.tone > 50 ? '#000000' : '#ffffff'} !important;
-            --md-sys-color-secondary-container: ${secondaryContainerColor} !important;
-            --md-sys-color-on-secondary-container: ${onSecondaryContainerColor} !important;
-            --md-sys-color-tertiary: ${tertiaryColor} !important;
-            --md-sys-color-on-tertiary: ${effectivePrimaryHct.tone > 50 ? '#000000' : '#ffffff'} !important;
-            --md-sys-color-tertiary-container: ${tertiaryContainerColor} !important;
-            --md-sys-color-on-tertiary-container: ${onTertiaryContainerColor} !important;
-          }
-        `
-        const overrideStyle = document.getElementById('theme-gray-override') as HTMLStyleElement
-        if (!overrideStyle) {
-          const style = document.createElement('style')
-          style.id = 'theme-gray-override'
-          style.textContent = overrideCSS
-          document.head.appendChild(style)
-        } else {
-          overrideStyle.textContent = overrideCSS
-        }
-      } else {
-        // 移除灰色覆盖样式（如果存在）
-        const overrideStyle = document.getElementById('theme-gray-override')
-        if (overrideStyle) {
-          overrideStyle.remove()
-        }
+      // 移除旧的覆盖样式
+      const overrideStyle = document.getElementById('theme-gray-override')
+      if (overrideStyle) {
+        overrideStyle.remove()
       }
       
-      // 设置 data-theme 属性
       document.documentElement.setAttribute('data-theme', this.isDarkMode ? 'dark' : 'light')
       
-      logger.debug('Theme applied:', cacheKey)
+      logger.debug('Theme applied:', cacheKey, isGray ? '(gray mode)' : '')
       
       // 验证颜色对比度
       setTimeout(() => {

@@ -154,9 +154,9 @@ export function adjustColorForContrast(
   const bgRgb = hexToRgb(targetBackground)
   const bgLum = getRelativeLuminance(bgRgb.r, bgRgb.g, bgRgb.b)
   
-  // 确定需要变亮还是变暗
+  // 确定需要变亮还是变暗（让颜色远离背景色以增加对比度）
   const currentLum = getRelativeLuminance(rgb.r, rgb.g, rgb.b)
-  const shouldLighten = currentLum < bgLum
+  const shouldLighten = currentLum > bgLum
   
   // 调整颜色
   let attempts = 0
