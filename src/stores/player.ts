@@ -319,6 +319,8 @@ export const usePlayerStore = defineStore('player', {
       successMessage: string,
       errorAction: 'switch-fallback' | 'switch-default',
       errorSeverity: ErrorSeverity,
+      // 自动切换(回退/跟随系统默认)不覆盖用户记忆的设备选择
+      remember = false,
     ): Promise<void> {
       if (this._isDestroyed || !deviceName) return
       if (this._isSwitchingDevice) {
@@ -340,6 +342,7 @@ export const usePlayerStore = defineStore('player', {
         await invoke('set_audio_device', {
           deviceName,
           currentTime,
+          remember,
         })
 
         if (!wasPlaying && this.currentTrack) {

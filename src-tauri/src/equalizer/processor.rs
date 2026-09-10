@@ -283,15 +283,157 @@ impl EqSettings {
     }
 }
 
+// ============================================================================
+// EQ 设置持久化(data/eq.json)
+// ============================================================================
+//
+// 均衡器与 config.json 分开落盘:调节是高频低延迟操作且独立于配置导出/导入,
+// 拖拽滑块时 set_eq_* 命令会连续触发。为了避免每次都同步写盘阻塞命令线程,
+// GlobalEqualizer 维护一个后台持久化线程:每次变更只投递一个"脏标记",
+// 线程收信后合并积压并一次性把最新快照原子写入 eq.json(写 tmp → rename)。
+
+enum PersistMsg {
+    Ping,
+    Stop,
+}
+
+/// 后台持久化器:持有一份 settings 句柄,收信后读取最新快照落盘。
+struct EqPersister {
+    tx: std::sync::mpsc::Sender<PersistMsg>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl EqPersister {
+    /// 在专用线程上运行持久化循环;`settings` 与 GlobalEqualizer 共享同一份 Arc。
+    fn spawn(settings: Arc<RwLock<EqSettings>>, path: String) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<PersistMsg>();
+        let thread = std::thread::Builder::new()
+            .name("eq-persister".to_string())
+            .spawn(move || {
+                let mut stop = false;
+                let mut dirty = false;
+                while let Ok(msg) = rx.recv() {
+                    match msg {
+                        PersistMsg::Ping => {
+                            dirty = true;
+                            // 合并拖拽期间积压的脏标记;注意不能把 Stop 一并吞掉,
+                            // 否则 Drop 时的 join 会永远等不到退出信号
+                            loop {
+                                match rx.try_recv() {
+                                    Ok(PersistMsg::Ping) => dirty = true,
+                                    Ok(PersistMsg::Stop) => {
+                                        stop = true;
+                                        break;
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                        PersistMsg::Stop => stop = true,
+                    }
+                    if dirty {
+                        // 先取快照再释放读锁,避免持锁做文件 I/O;
+                        // 用 ok() 直接丢掉 PoisonError(它持有读锁守卫)
+                        if let Some(snapshot) = settings.read().ok().map(|guard| guard.clone()) {
+                            write_eq_settings_file(&path, &snapshot);
+                        }
+                        dirty = false;
+                    }
+                    if stop {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn eq persister thread");
+        Self {
+            tx,
+            thread: Some(thread),
+        }
+    }
+
+    fn mark_dirty(&self) {
+        // 发送失败仅说明线程已退出(进程收尾),静默忽略
+        let _ = self.tx.send(PersistMsg::Ping);
+    }
+}
+
+impl Drop for EqPersister {
+    fn drop(&mut self) {
+        // 发送 Stop 并等待线程退出(线程会先处理完已排队的 Ping 再做最后落盘)
+        let _ = self.tx.send(PersistMsg::Stop);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// 把 EQ 快照原子写入 `<data>/eq.json`(先写 .tmp 再 rename)
+fn write_eq_settings_file(path: &str, settings: &EqSettings) {
+    use std::io::Write;
+    let Ok(content) = serde_json::to_string_pretty(settings) else {
+        return;
+    };
+    let tmp_path = format!("{path}.tmp");
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp_path, path)
+    })();
+    if let Err(e) = result {
+        log::warn!("Failed to persist equalizer settings to {path}: {e}");
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+}
+
+/// 从 eq.json 读取 EQ 快照;文件缺失/损坏时回退默认值(不会影响启动)
+fn read_eq_settings_file(path: &str) -> Option<EqSettings> {
+    let text = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<EqSettings>(&text) {
+        Ok(settings) => Some(settings),
+        Err(e) => {
+            log::warn!("Failed to parse equalizer settings file {path}: {e}");
+            None
+        }
+    }
+}
+
 pub struct GlobalEqualizer {
     settings: Arc<RwLock<EqSettings>>,
+    persister: Option<EqPersister>,
 }
 
 impl GlobalEqualizer {
+    /// 纯内存均衡器(无落盘)。用于测试与不指定数据目录的场景。
     #[must_use]
     pub fn new() -> Self {
         Self {
             settings: Arc::new(RwLock::new(EqSettings::default())),
+            persister: None,
+        }
+    }
+
+    /// 创建均衡器并绑定 `<data>/eq.json` 持久化:
+    /// 启动时若文件有效则恢复上次设置,之后每次变更经后台线程合并落盘。
+    #[must_use]
+    pub fn with_persistence(config_dir: &str) -> Self {
+        let path = std::path::Path::new(config_dir)
+            .join("eq.json")
+            .to_string_lossy()
+            .to_string();
+
+        let initial = match read_eq_settings_file(&path) {
+            Some(settings) => {
+                log::info!("Loaded equalizer settings from: {path}");
+                settings
+            }
+            None => EqSettings::default(),
+        };
+        let settings = Arc::new(RwLock::new(initial));
+        let persister = EqPersister::spawn(Arc::clone(&settings), path);
+        Self {
+            settings,
+            persister: Some(persister),
         }
     }
 
@@ -307,24 +449,36 @@ impl GlobalEqualizer {
 
     pub fn set_settings(&self, settings: EqSettings) {
         *lock_or_log!(self.settings.write()) = settings;
+        self.persist_now();
     }
 
     pub fn set_enabled(&self, enabled: bool) {
         lock_or_log!(self.settings.write()).enabled = enabled;
+        self.persist_now();
     }
 
     pub fn set_gains(&self, gains: [f32; EQ_BAND_COUNT]) {
         lock_or_log!(self.settings.write()).gains = gains;
+        self.persist_now();
     }
 
     pub fn set_band_gain(&self, band: usize, gain: f32) {
         if band < EQ_BAND_COUNT {
             lock_or_log!(self.settings.write()).gains[band] = gain.clamp(-8.0, 8.0);
+            self.persist_now();
         }
     }
 
     pub fn set_preamp(&self, preamp: f32) {
         lock_or_log!(self.settings.write()).preamp = preamp.clamp(-8.0, 8.0);
+        self.persist_now();
+    }
+
+    /// 标记一次变更:通知后台线程尽快把最新快照写盘(有合并)
+    fn persist_now(&self) {
+        if let Some(persister) = &self.persister {
+            persister.mark_dirty();
+        }
     }
 }
 
@@ -536,5 +690,37 @@ mod tests {
         assert!(settings.gains.iter().all(|&g| approx_eq(g, 1.0)));
         eq.set_settings(EqSettings::default());
         assert!(!eq.get_settings().enabled);
+    }
+
+    #[test]
+    fn test_eq_persistence_roundtrip() {
+        // 验证 with_persistence:写入 eq.json 后重建实例能恢复设置
+        let dir = std::env::temp_dir().join(format!("eq-persist-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let dir_str = dir.to_str().expect("temp path utf-8");
+        let path = dir.join("eq.json");
+
+        let mut gains = [0.0f32; EQ_BAND_COUNT];
+        gains[2] = 3.5;
+        gains[9] = -2.0;
+        {
+            let eq = GlobalEqualizer::with_persistence(dir_str);
+            eq.set_enabled(true);
+            eq.set_gains(gains);
+            eq.set_preamp(1.5);
+            // 离开作用域时 EqPersister Drop → Stop + join,队列中最后一次 Ping 已写盘
+        }
+
+        let eq = GlobalEqualizer::with_persistence(dir_str);
+        let settings = eq.get_settings();
+        assert!(settings.enabled, "enabled should be restored");
+        assert!(approx_eq(settings.gains[2], 3.5));
+        assert!(approx_eq(settings.gains[9], -2.0));
+        assert!(approx_eq(settings.preamp, 1.5));
+        drop(eq);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(dir.join("eq.json.tmp"));
+        let _ = std::fs::remove_dir(&dir);
     }
 }

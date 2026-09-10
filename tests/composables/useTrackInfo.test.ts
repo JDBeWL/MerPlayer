@@ -40,7 +40,7 @@ vi.mock('@/utils/titleExtractor', () => ({
   TitleExtractor: { extractTitle: (...args: unknown[]) => extractTitle(...(args as [])) },
 }))
 
-const { useTrackInfo } = await import('@/composables/useTrackInfo')
+const { useTrackInfo, MAX_PROCESSED_TRACKS } = await import('@/composables/useTrackInfo')
 const logger = (await import('@/utils/logger')).default
 
 const track = (path: string, extra: Partial<Track> = {}): Track => ({ path, ...extra }) as Track
@@ -300,19 +300,21 @@ describe('cache management', () => {
     expect(processedTracks.value.get('/manual.mp3')).toMatchObject({ processing: false })
   })
 
-  it('evicts the least recently used entry once 200 keys are stored', async () => {
+  it('evicts the least recently used entry once the cache is full', async () => {
     extractTitle.mockResolvedValue({ title: 'T', artist: 'A' })
     const { processTrackInfo, processedTracks, getTrackTitle } = useTrackInfo()
 
-    // 先触及 /keeper.mp3,使其成为最久未访问项
+    // 先触及 /keeper.mp3,使其成为最久未访问项,再灌满到超过上限
     await processTrackInfo('/keeper.mp3')
-    for (let i = 0; i < 205; i++) {
+    const overflow = MAX_PROCESSED_TRACKS + 5
+    for (let i = 0; i < overflow; i++) {
       await processTrackInfo(`/filler${i}.mp3`)
     }
+    const newestKey = `/filler${overflow - 1}.mp3`
 
     expect(processedTracks.value.has('/keeper.mp3')).toBe(false)
     // 缓存规模受 LRU 上限约束
-    expect(processedTracks.value.size).toBeLessThanOrEqual(200)
-    expect(getTrackTitle(track('/filler204.mp3'))).toBeDefined()
+    expect(processedTracks.value.size).toBeLessThanOrEqual(MAX_PROCESSED_TRACKS)
+    expect(getTrackTitle(track(newestKey))).toBeDefined()
   })
 })

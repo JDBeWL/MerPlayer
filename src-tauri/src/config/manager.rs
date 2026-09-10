@@ -27,9 +27,51 @@ pub struct AppConfig {
     /// 歌词设置
     #[serde(default)]
     pub lyrics: LyricsConfig,
+    /// UI 非临时状态(如迷你模式;面板开关为临时态不落盘)
+    #[serde(default)]
+    pub ui: UiConfig,
+    /// 可视化(频谱)设置
+    #[serde(default)]
+    pub visualizer: VisualizerConfig,
     /// 上次播放会话 (用于启动恢复)
     #[serde(default)]
     pub last_session: Option<LastSession>,
+}
+
+/// UI 设置(仅持久化非临时状态)
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UiConfig {
+    #[serde(default)]
+    pub mini_mode: bool,
+}
+
+/// 可视化(频谱)设置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualizerConfig {
+    #[serde(default = "default_target_fps")]
+    pub target_fps: u32,
+    /// 是否把目标帧率 cap 到屏幕刷新率(字段名是历史遗留的"垂直同步",仅作持久化键使用)
+    #[serde(default)]
+    pub enable_vertical_sync: bool,
+    /// 最近一次检测到的屏幕刷新率(仅作显示/限制用参考值)
+    #[serde(default)]
+    pub detected_refresh_rate: Option<u32>,
+}
+
+fn default_target_fps() -> u32 {
+    60
+}
+
+impl Default for VisualizerConfig {
+    fn default() -> Self {
+        Self {
+            target_fps: default_target_fps(),
+            enable_vertical_sync: false,
+            detected_refresh_rate: None,
+        }
+    }
 }
 
 /// 上次播放会话信息
@@ -114,6 +156,13 @@ pub struct PlaylistConfig {
     pub generate_all_songs_playlist: bool,
     pub folder_based_playlists: bool,
     pub playlist_name_format: String,
+    /// 曲目排序: "asc" | "desc" (前端 SortOrder)
+    #[serde(default = "default_sort_order")]
+    pub sort_order: String,
+}
+
+fn default_sort_order() -> String {
+    "asc".to_string()
 }
 
 /// 通用设置
@@ -126,6 +175,15 @@ pub struct GeneralConfig {
     pub startup_load_last_config: bool,
     pub auto_save_config: bool,
     pub show_audio_info: bool,
+    /// 是否显示队列信息
+    #[serde(default = "default_true")]
+    pub show_queue_info: bool,
+    /// 沉浸式封面取色风格：album = 整张封面的代表色；fusion = 取封面右缘条带
+    #[serde(default = "default_immersive_color_scheme")]
+    pub immersive_color_scheme: String,
+    /// 沉浸式模式下是否根据封面主色亮度自动切换深/浅主题
+    #[serde(default = "default_true")]
+    pub immersive_auto_theme: bool,
     /// 是否启用自动更新（默认关闭）
     #[serde(default)]
     pub enable_auto_update: bool,
@@ -138,6 +196,10 @@ pub struct GeneralConfig {
     /// 封面缓存路径，默认为空表示使用系统临时目录
     #[serde(default)]
     pub cover_cache_path: Option<String>,
+}
+
+fn default_immersive_color_scheme() -> String {
+    "album".to_string()
 }
 
 fn default_cover_cache_size_mb() -> u64 {
@@ -154,6 +216,12 @@ pub struct AudioConfig {
     /// 是否启用淡入淡出(切歌平滑过渡 + pause/resume 消除爆音)
     #[serde(default = "default_true")]
     pub fade_enabled: bool,
+    /// 用户手动选择的输出设备标识,取自 cpal `DeviceTrait::id()`,各平台为原生稳定标识:
+    /// Windows = WASAPI endpoint ID,macOS = CoreAudio DeviceUID,Linux = ALSA PCM 名。
+    /// 落盘格式为 `"host:id"`;标识机器绑定,失效时启动时静默回退到系统默认设备。
+    /// 仅在用户在设置页主动选择设备时写入,自动回退/跟随系统默认不写,避免覆盖用户选择。
+    #[serde(default)]
+    pub preferred_device_id: Option<String>,
 }
 
 /// 歌词设置
@@ -172,8 +240,47 @@ pub struct LyricsConfig {
     pub lyrics_alignment: String,
     #[serde(default = "default_lyrics_font_family")]
     pub lyrics_font_family: String,
+    /// 译文字体(空字符串 = 跟随原文歌词字体)
+    #[serde(default)]
+    pub translation_font_family: String,
+    /// 无歌词时是否显示"未找到歌词"提示 (默认显示)
+    #[serde(default = "default_true")]
+    pub show_no_lyrics_hint: bool,
+    /// 无歌词时是否显示"获取歌词"按钮 (默认显示)
+    #[serde(default = "default_true")]
+    pub show_fetch_lyrics_button: bool,
     #[serde(default = "default_lyrics_style")]
     pub lyrics_style: String,
+    /// 桌面歌词设置
+    #[serde(default)]
+    pub desktop_lyrics: DesktopLyricsConfig,
+}
+
+/// 桌面歌词设置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopLyricsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_desktop_lyrics_locked")]
+    pub locked: bool,
+    #[serde(default = "default_desktop_lyrics_font_size")]
+    pub font_size: i32,
+    /// auto按背景亮度自动切换深/浅文字; 可选 dark/light/blue/pink/orange/green
+    #[serde(default = "default_desktop_lyrics_color_preset")]
+    pub color_preset: String,
+}
+
+fn default_desktop_lyrics_locked() -> bool {
+    true
+}
+
+fn default_desktop_lyrics_font_size() -> i32 {
+    28
+}
+
+fn default_desktop_lyrics_color_preset() -> String {
+    "auto".to_string()
 }
 
 const fn default_true() -> bool {
@@ -189,7 +296,7 @@ fn default_lyrics_alignment() -> String {
 }
 
 fn default_lyrics_font_family() -> String {
-    "Roboto".to_string()
+    "Noto Sans SC".to_string()
 }
 
 fn default_lyrics_style() -> String {
@@ -254,6 +361,7 @@ impl Default for PlaylistConfig {
             generate_all_songs_playlist: true,
             folder_based_playlists: true,
             playlist_name_format: "{folderName}".to_string(),
+            sort_order: default_sort_order(),
         }
     }
 }
@@ -266,6 +374,9 @@ impl Default for GeneralConfig {
             startup_load_last_config: true,
             auto_save_config: true,
             show_audio_info: true,
+            show_queue_info: true,
+            immersive_color_scheme: default_immersive_color_scheme(),
+            immersive_auto_theme: true,
             enable_auto_update: false,
             external_url_allowed_hosts: default_external_url_allowed_hosts(),
             cover_cache_size_mb: default_cover_cache_size_mb(),
@@ -280,6 +391,7 @@ impl Default for AudioConfig {
             exclusive_mode: false,
             volume: default_volume(),
             fade_enabled: true,
+            preferred_device_id: None,
         }
     }
 }
@@ -292,8 +404,23 @@ impl Default for LyricsConfig {
             prefer_translation: true,
             online_source: "netease".to_string(),
             lyrics_alignment: "center".to_string(),
-            lyrics_font_family: "Roboto".to_string(),
-            lyrics_style: "modern".to_string(),
+            lyrics_font_family: default_lyrics_font_family(),
+            translation_font_family: String::new(),
+            show_no_lyrics_hint: true,
+            show_fetch_lyrics_button: true,
+            lyrics_style: default_lyrics_style(),
+            desktop_lyrics: DesktopLyricsConfig::default(),
+        }
+    }
+}
+
+impl Default for DesktopLyricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            locked: true,
+            font_size: 28,
+            color_preset: default_desktop_lyrics_color_preset(),
         }
     }
 }
@@ -670,6 +797,12 @@ mod tests {
         assert!(json.contains("\"fadeEnabled\""));
         assert!(json.contains("\"onlineSource\""));
         assert!(json.contains("\"lyricsAlignment\""));
+        assert!(json.contains("\"translationFontFamily\""));
+        assert!(json.contains("\"showNoLyricsHint\""));
+        assert!(json.contains("\"desktopLyrics\""));
+        assert!(json.contains("\"miniMode\""));
+        assert!(json.contains("\"targetFps\""));
+        assert!(json.contains("\"sortOrder\""));
         assert!(json.contains("\"lastSession\""));
         // snake_case 不应出现
         assert!(!json.contains("music_directories"), "snake_case leaked");
@@ -703,6 +836,7 @@ mod tests {
         assert!(config.generate_all_songs_playlist);
         assert!(config.folder_based_playlists);
         assert_eq!(config.playlist_name_format, "{folderName}");
+        assert_eq!(config.sort_order, "asc");
     }
 
     #[test]
@@ -711,6 +845,7 @@ mod tests {
         assert!(!config.exclusive_mode);
         assert!(approx_eq(config.volume, 0.5));
         assert!(config.fade_enabled);
+        assert!(config.preferred_device_id.is_none());
     }
 
     #[test]
@@ -721,8 +856,48 @@ mod tests {
         assert!(config.prefer_translation);
         assert_eq!(config.online_source, "netease");
         assert_eq!(config.lyrics_alignment, "center");
-        assert_eq!(config.lyrics_font_family, "Roboto");
+        assert_eq!(config.lyrics_font_family, "Noto Sans SC");
         assert_eq!(config.lyrics_style, "modern");
+        assert_eq!(config.translation_font_family, "");
+        assert!(config.show_no_lyrics_hint);
+        assert!(config.show_fetch_lyrics_button);
+        assert!(!config.desktop_lyrics.enabled);
+        assert!(config.desktop_lyrics.locked);
+        assert_eq!(config.desktop_lyrics.font_size, 28);
+        assert_eq!(config.desktop_lyrics.color_preset, "auto");
+    }
+
+    #[test]
+    fn test_ui_and_visualizer_defaults() {
+        let config = AppConfig::default();
+        assert!(!config.ui.mini_mode);
+        assert_eq!(config.visualizer.target_fps, 60);
+        assert!(!config.visualizer.enable_vertical_sync);
+        assert!(config.visualizer.detected_refresh_rate.is_none());
+    }
+
+    #[test]
+    fn test_new_fields_parse_old_json_fragment() {
+        // 旧配置文件缺失本次新增的字段时必须能成功反序列化(逐字段 serde default),
+        // 否则整个 config.json 会解析失败并静默回退默认值、抹掉用户已有设置。
+        let mut v = serde_json::to_value(AppConfig::default()).expect("serialize");
+        // 剥掉本次新增的键,模拟旧版 config.json
+        v["playlist"].as_object_mut().unwrap().remove("sortOrder");
+        let lyrics = v["lyrics"].as_object_mut().unwrap();
+        lyrics.remove("translationFontFamily");
+        lyrics.remove("showNoLyricsHint");
+        lyrics.remove("showFetchLyricsButton");
+        lyrics.remove("desktopLyrics");
+        v.as_object_mut().unwrap().remove("ui");
+        v.as_object_mut().unwrap().remove("visualizer");
+
+        let config: AppConfig = serde_json::from_value(v).expect("old config must parse");
+        assert_eq!(config.playlist.sort_order, "asc");
+        assert_eq!(config.lyrics.lyrics_style, "modern");
+        assert_eq!(config.lyrics.desktop_lyrics.font_size, 28);
+        assert_eq!(config.visualizer.target_fps, 60);
+        assert!(!config.ui.mini_mode);
+        assert!(config.last_session.is_none());
     }
 
     #[test]
@@ -733,6 +908,9 @@ mod tests {
         assert!(config.startup_load_last_config);
         assert!(config.auto_save_config);
         assert!(config.show_audio_info);
+        assert!(config.show_queue_info);
+        assert_eq!(config.immersive_color_scheme, "album");
+        assert!(config.immersive_auto_theme);
         assert!(!config.enable_auto_update);
         assert!(!config.external_url_allowed_hosts.is_empty());
         assert_eq!(config.cover_cache_size_mb, 1024);

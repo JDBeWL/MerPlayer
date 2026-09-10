@@ -236,9 +236,11 @@ describe('player.management > _switchAudioDevice', () => {
       ErrorSeverity.HIGH,
     )
 
+    // switch-default 是自动切换(跟随系统默认),不能覆盖用户的固定选择
     expect(invokeMock).toHaveBeenCalledWith('set_audio_device', {
       deviceName: 'Speakers',
       currentTime: 0,
+      remember: false,
     })
     expect(handle).toHaveBeenCalledWith(
       expect.any(Error),

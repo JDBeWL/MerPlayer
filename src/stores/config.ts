@@ -208,6 +208,13 @@ export const useConfigStore = defineStore('config', {
           themeStore.setThemePreference(configData.general.theme)
         }
 
+        // 上次退出时处于迷你模式则恢复窗口状态(需配置加载完成后窗口已就绪)
+        if (this.ui.miniMode) {
+          invoke('set_mini_mode', { enable: true }).catch((error) => {
+            logger.warn('Failed to restore mini mode on startup:', error)
+          })
+        }
+
         logger.info('Configuration loaded successfully')
       }
 
@@ -406,10 +413,11 @@ export const useConfigStore = defineStore('config', {
     },
 
     async toggleMiniMode(): Promise<void> {
+      const newMode = !this.ui.miniMode
       try {
-        const newMode = !this.ui.miniMode
         await invoke('set_mini_mode', { enable: newMode })
-        this.ui.miniMode = newMode
+        // 经 _patchSection 走统一"标脏 + 自动保存"链路,确保 mini 模式重启后恢复
+        this._patchSection('ui', { miniMode: newMode })
       } catch (error) {
         logger.error('Failed to toggle mini mode:', error)
         // invoke 失败时不修改状态，因为 try 块中尚未修改

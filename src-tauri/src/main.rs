@@ -33,19 +33,7 @@ use mercurial_player::{
 use mercurial_player::taskbar;
 
 fn main() {
-    // 初始化 cpal host
-    let host = cpal::default_host();
-    let device = if let Some(device) = host.default_output_device() {
-        device
-    } else {
-        log::error!("No default output device available");
-        eprintln!("错误: 未检测到可用的音频输出设备,应用无法启动。");
-        std::process::exit(1);
-    };
-    let device_name = audio::device::get_device_friendly_name(&device)
-        .unwrap_or_else(|| "Unknown Device".to_string());
-
-    // 创建配置管理器
+    // 创建配置管理器并加载配置(独占模式 / 淡入淡出 / 记忆的输出设备都来自这里)
     let config_manager = ConfigManager::new();
 
     // 初始化配置文件
@@ -53,15 +41,47 @@ fn main() {
         log::error!("Failed to initialize config files: {e}");
     }
 
-    // 从配置加载独占模式设置
-    let (exclusive_mode_enabled, fade_enabled) = config_manager
-        .load_config()
+    let config = config_manager.load_config().ok();
+    let (exclusive_mode_enabled, fade_enabled) = config
+        .as_ref()
         .map(|c| (c.audio.exclusive_mode, c.audio.fade_enabled))
         .unwrap_or((false, true));
 
     log::info!(
         "Loaded exclusive mode from config: {exclusive_mode_enabled}, fade enabled: {fade_enabled}"
     );
+
+    // 初始化 cpal host,并解析实际使用的输出设备:
+    // 用户曾在设置页手动选择过设备时,用落盘的平台原生标识恢复(设备仍在线才生效),
+    // 否则跟随系统默认输出设备。标识各平台不同(WASAPI endpoint ID / CoreAudio
+    // DeviceUID / ALSA PCM 名),由 audio::device 统一解析。
+    let host = cpal::default_host();
+    let preferred_id = config
+        .as_ref()
+        .and_then(|c| c.audio.preferred_device_id.clone());
+
+    let restored = preferred_id
+        .as_deref()
+        .and_then(audio::device::resolve_preferred_device);
+
+    let (device, device_name) = if let Some(dev) = restored {
+        let name = audio::device::get_device_friendly_name(&dev)
+            .unwrap_or_else(|| "Unknown Device".to_string());
+        log::info!("Restoring preferred audio device from config: {name}");
+        (dev, name)
+    } else {
+        if let Some(id) = preferred_id.as_deref() {
+            log::info!("Preferred audio device '{id}' is not available, using default device");
+        }
+        let dev = host.default_output_device().unwrap_or_else(|| {
+            log::error!("No default output device available");
+            eprintln!("错误: 未检测到可用的音频输出设备,应用无法启动。");
+            std::process::exit(1);
+        });
+        let name = audio::device::get_device_friendly_name(&dev)
+            .unwrap_or_else(|| "Unknown Device".to_string());
+        (dev, name)
+    };
 
     // 根据独占模式设置创建播放器
     let output = {

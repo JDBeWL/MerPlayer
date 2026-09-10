@@ -337,12 +337,18 @@ pub fn get_audio_devices() -> Result<Vec<AudioDeviceInfo>, AppError> {
     get_all_audio_devices()
 }
 
+/// 切换音频设备(携带当前播放进度,便于后端无缝续播)。
+///
+/// `remember`: 是否记住该设备选择(落盘 `audio.preferredDeviceId`)。
+/// 仅设置页里的主动选择传 true;设备拔出自动回退 / 跟随系统默认切换传 false,
+/// 避免自动切换覆盖用户的固定选择。缺省(前端旧调用)按 true 处理。
 #[command]
 pub async fn set_audio_device(
     app: AppHandle,
     state: State<'_, AppState>,
     device_name: String,
     current_time: Option<f32>,
+    remember: Option<bool>,
 ) -> Result<(), AppError> {
     log::info!("Attempting to switch to audio device: {device_name}");
 
@@ -361,8 +367,35 @@ pub async fn set_audio_device(
         switch_to_shared_mode(&app, &state, &device_name, current_time).await
     };
 
-    // 如果切换成功，更新设备监听器
+    // 切换成功后:更新设备监听器,并把设备标识落盘(仅用户主动选择;
+    // 解析不到标识则跳过——不影响本次切换,只是下次启动不记忆)
     if result.is_ok() {
+        if remember.unwrap_or(true) {
+            // cpal 枚举会触碰平台音频 API(Windows 上还要初始化 COM),
+            // 放到阻塞线程池执行,避免卡住异步命令线程
+            let dev_name = device_name.clone();
+            let device_id = tauri::async_runtime::spawn_blocking(move || {
+                super::device::name_to_device_id(&dev_name)
+            })
+            .await
+            .ok()
+            .flatten();
+
+            match device_id {
+                Some(id) => {
+                    let _ = state.config_manager.update_config(|config| {
+                        config.audio.preferred_device_id = Some(id.clone());
+                    });
+                    log::info!("Remembered preferred audio device: {id}");
+                }
+                None => {
+                    log::debug!(
+                        "No stable device id resolvable for '{device_name}', skipping device memory"
+                    );
+                }
+            }
+        }
+
         if let Ok(monitor) = state.player.device_monitor.try_lock() {
             monitor.update_current_device(device_name);
         }

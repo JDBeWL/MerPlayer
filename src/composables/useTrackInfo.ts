@@ -16,9 +16,11 @@ interface ProcessedTrackInfo {
 
 /**
  * 缓存上限,避免长期使用后无限增长。
- * 200 条足够覆盖常见使用场景 (一张专辑通常 10-20 首,200 条 = 10-20 张专辑)。
+ * 200 条在真实曲库下会频繁触发清理(扫一次目录就顶满),上调到 5000 条。
+ *
+ * 导出供单测读取,避免测试里再硬编码一份上限。
  */
-const MAX_PROCESSED_TRACKS = 200
+export const MAX_PROCESSED_TRACKS = 5000
 
 /**
  * 访问顺序追踪,用于 LRU 驱逐。
@@ -152,7 +154,7 @@ async function processTrackInfo(trackPath: string): Promise<void> {
  *
  * 使用模块级共享缓存 (sharedProcessedTracks),所有 useTrackInfo 实例
  * 共享同一份数据,避免 App.vue 和 MiniPlayer.vue 各创建一份独立缓存。
- * 缓存有 LRU 上限 (200 条),防止长期使用后无限增长。
+ * 缓存有 LRU 上限 (MAX_PROCESSED_TRACKS 条),防止长期使用后无限增长。
  */
 export function useTrackInfo() {
   // 确保模块级 configStore 引用已初始化

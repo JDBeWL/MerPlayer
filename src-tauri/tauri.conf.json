@@ -34,7 +34,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "appimage", "deb", "dmg", "app"],
+    "targets": ["nsis", "appimage", "deb", "dmg", "app"],
     "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
     "resources": [],
@@ -42,7 +42,18 @@
     "publisher": "JDBeWL",
     "category": "Music",
     "shortDescription": "A music player by JDBeWL",
-    "longDescription": "A Material Design 3 flavor music player by JDBeWL"
+    "longDescription": "A Material Design 3 flavor music player by JDBeWL",
+    "windows": {
+      "nsis": {
+        "template": "./windows/nsis/installer.nsi",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": true,
+        "customLanguageFiles": {
+          "SimpChinese": "./windows/nsis/SimpChinese.nsh",
+          "English": "./windows/nsis/English.nsh"
+        }
+      }
+    }
   },
   "plugins": {
     "fs": {

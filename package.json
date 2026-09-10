@@ -33,14 +33,14 @@
     "@fontsource/roboto": "^5.3.0",
     "@material/material-color-utilities": "^0.4.0",
     "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-dialog": "^2.7.0",
-    "@tauri-apps/plugin-fs": "^2.5.0",
-    "@tauri-apps/plugin-global-shortcut": "^2.3.1",
-    "@tauri-apps/plugin-http": "^2.5.8",
-    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-fs": "^2.5.2",
+    "@tauri-apps/plugin-global-shortcut": "^2.3.2",
+    "@tauri-apps/plugin-http": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2.5.5",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-store": "^2.4.2",
-    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@tauri-apps/plugin-store": "^2.4.4",
+    "@tauri-apps/plugin-updater": "^2.11.0",
     "lxgw-wenkai-screen-webfont": "^1.7.0",
     "pica": "^10.0.3",
     "pinia": "^4.0.2",
@@ -74,5 +74,5 @@
     "vue-demi@0.14.10": true,
     "@parcel/watcher@2.6.0": true
   },
-  "packageManager": "pnpm@11.20.0+sha512.9a6f330a95b66446ea088faf1521405a8a01f07fde7124cc9958dfed52d4bb436737e65b08f85f37b46fcba375092558ac51262b816844b22f63406ed166bfee"
+  "packageManager": "pnpm@11.25.0+sha512.5cde925b4f075f725eb71fbae18a42ffe784524789f19b61c731cb8721ec28aaee160e01a8d5af4fedb2a42cdbf300efe23db356b0d4a17b4d63e11f8ab7c956"
 }

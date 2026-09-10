@@ -83,3 +83,133 @@ fn check_wasapi_exclusive_support(device_name: &str) -> bool {
         false
     }
 }
+
+// ============================================================================
+// 跨平台音频设备标识 (Device ID)
+// ============================================================================
+// 设备友好名会随驱动更新、系统语言而变化,不适合作为持久化标识。cpal 的
+// `DeviceTrait::id()` 在各平台返回的都是原生稳定标识:
+//   - Windows (WASAPI)  : IMMDevice::GetId() 的 endpoint ID
+//                         {0.0.0.00000000}.{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+//   - macOS (CoreAudio) : kAudioDevicePropertyDeviceUID,跨重启/重插保持稳定
+//   - Linux (ALSA)      : PCM 名,如 hw:CARD=PCH,DEV=0
+// 用户手动选择的设备以 `DeviceId` 的字符串形式("host:id")落盘
+// (config.audio.preferredDeviceId),启动时再解析回具体设备。
+//
+// 注意:标识是机器绑定的,换机器或重装驱动后可能失效,此时静默回退到系统默认设备。
+// 同样的芯片安装的驱动可能会被系统认为是同样设备，如CX31993的公版方案没有明确要求PID唯一，
+// 可能会出现不同设备的标识相同的情况，这是已知的问题。
+
+/// 枚举全部输出设备,返回 (device_id, friendly_name) 列表。
+///
+/// 统一走 cpal 枚举,保证 ID 与名称来自同一次枚举,避免跨枚举的 ID 与名称不匹配。
+fn enumerate_output_devices() -> Vec<(String, String)> {
+    let host = cpal::default_host();
+    let Ok(devices) = host.output_devices() else {
+        log::warn!("Failed to enumerate output devices");
+        return Vec::new();
+    };
+
+    devices
+        .filter_map(|device| {
+            let id = device.id().ok()?;
+            let name = get_device_friendly_name(&device)?;
+            Some((id.to_string(), name))
+        })
+        .collect()
+}
+
+/// 判断枚举到的 ID 是否就是落盘的标识。
+///
+/// `candidate` 形如 `host:id`;早期版本在 Windows 上只落盘了裸 endpoint ID
+/// (没有 host 前缀),这里额外剥掉前缀再比一次以兼容旧配置。
+fn device_id_matches(candidate: &str, stored: &str) -> bool {
+    candidate == stored
+        || candidate
+            .split_once(':')
+            .is_some_and(|(_, raw)| raw == stored)
+}
+
+/// 根据落盘标识解析当前友好名称(用于启动恢复时的日志与状态展示)。
+pub fn device_id_to_name(device_id: &str) -> Option<String> {
+    enumerate_output_devices()
+        .into_iter()
+        .find(|(id, _)| device_id_matches(id, device_id))
+        .map(|(_, name)| name)
+}
+
+/// 根据友好名称解析落盘标识(切换成功后写入 config.audio.preferredDeviceId)。
+pub fn name_to_device_id(device_name: &str) -> Option<String> {
+    enumerate_output_devices()
+        .into_iter()
+        .find(|(_, name)| name == device_name)
+        .map(|(id, _)| id)
+}
+
+/// 启动时把落盘标识解析回 cpal 设备。
+///
+/// 优先让 cpal 用 `device_by_id` 自己匹配,避免在重名设备上按名称选错;
+/// 标识过期或设备已拔出时返回 None,调用方回退到系统默认设备。
+pub fn resolve_preferred_device(preferred_id: &str) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+
+    if let Ok(id) = preferred_id.parse::<cpal::DeviceId>() {
+        if let Some(device) = host.device_by_id(&id) {
+            return Some(device);
+        }
+    }
+
+    // 兼容早期无 host 前缀的落盘格式
+    host.output_devices().ok()?.find(|device| {
+        device
+            .id()
+            .is_ok_and(|id| device_id_matches(&id.to_string(), preferred_id))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_id_matches;
+
+    #[test]
+    fn test_device_id_matches_current_format() {
+        // 当前落盘格式 host:id,WASAPI / CoreAudio / ALSA 三种形态都要能命中
+        assert!(device_id_matches(
+            "wasapi:{0.0.0.00000000}.{abc-def}",
+            "wasapi:{0.0.0.00000000}.{abc-def}"
+        ));
+        assert!(device_id_matches(
+            "coreaudio:AppleHDAEngineOutput:1B,0,1,1:0",
+            "coreaudio:AppleHDAEngineOutput:1B,0,1,1:0"
+        ));
+        assert!(device_id_matches(
+            "alsa:hw:CARD=PCH,DEV=0",
+            "alsa:hw:CARD=PCH,DEV=0"
+        ));
+    }
+
+    #[test]
+    fn test_device_id_matches_legacy_bare_id() {
+        // 早期版本在 Windows 上只落盘裸 endpoint ID(无 host 前缀),需兼容
+        assert!(device_id_matches(
+            "wasapi:{0.0.0.00000000}.{abc-def}",
+            "{0.0.0.00000000}.{abc-def}"
+        ));
+        // ID 里含冒号时只剥掉第一个冒号前的 host 段
+        assert!(device_id_matches(
+            "alsa:hw:CARD=PCH,DEV=0",
+            "hw:CARD=PCH,DEV=0"
+        ));
+    }
+
+    #[test]
+    fn test_device_id_matches_rejects_mismatch() {
+        assert!(!device_id_matches("wasapi:{a}", "wasapi:{b}"));
+        assert!(!device_id_matches("wasapi:{a}", "coreaudio:{a}"));
+        // 前缀剥离后仍不同
+        assert!(!device_id_matches(
+            "alsa:hw:CARD=PCH,DEV=0",
+            "hw:CARD=PCH,DEV=1"
+        ));
+    }
+}

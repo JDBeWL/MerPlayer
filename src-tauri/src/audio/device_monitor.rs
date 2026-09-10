@@ -3,17 +3,23 @@
 //! 监听音频设备的连接和断开事件、设备断开时自动切换到其他可用设备，
 //! 以及系统默认输出设备变化（包括无插拔时用户在系统设置中主动切换）时跟随切换。
 //!
-//! 所有平台统一使用 cpal 轮询实现。Windows 平台的 IMMNotificationClient 事件驱动
-//! 实现保留在 `windows_impl` 模块中（通过 `IMM_NOTIFICATION` 常量启用），
+//! 默认（所有平台）使用 cpal 轮询实现。Windows 平台的 IMMNotificationClient 事件驱动
+//! 实现保留在 `windows_impl` 模块中，通过 `imm-notification` feature 启用
+//! （在 `DeviceMonitor::start` 中按 cfg 分发）；
 //! 但由于 COM 回调触发和 previous_default 状态同步存在运行时可靠性问题，
-//! 默认使用轮询模式以保证功能稳定。
+//! 默认关闭以保证功能稳定。
 
 use cpal::traits::HostTrait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+// Duration / Emitter 只有轮询实现用到;启用 imm-notification 后该实现不参与编译,
+// windows_impl 内部有自己的同名导入。
+#[cfg(not(all(target_os = "windows", feature = "imm-notification")))]
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+#[cfg(not(all(target_os = "windows", feature = "imm-notification")))]
+use tauri::Emitter;
 
 use super::device::get_device_friendly_name;
 
@@ -53,6 +59,12 @@ impl DeviceMonitor {
         let current_device = Arc::clone(&self.current_device);
 
         let monitor_thread = thread::spawn(move || {
+            // 两者入参一致,按 feature 二选一:启用 imm-notification 时走 Windows
+            // 事件驱动实现,否则走跨平台 cpal 轮询实现。
+            #[cfg(all(target_os = "windows", feature = "imm-notification"))]
+            windows_impl::run_windows_monitor(app_handle, is_running, current_device);
+
+            #[cfg(not(all(target_os = "windows", feature = "imm-notification")))]
             monitor_device_changes(app_handle, is_running, current_device);
         });
 
@@ -98,6 +110,10 @@ impl Drop for DeviceMonitor {
 // ============================================================================
 
 /// 监听设备变更的主循环
+///
+/// 仅在使用轮询模式时编译:启用 imm-notification 后由 `windows_impl` 接管,
+/// 此时本函数(及其专用的 `get_device_names`)不会被引用。
+#[cfg(not(all(target_os = "windows", feature = "imm-notification")))]
 fn monitor_device_changes(
     app: AppHandle,
     is_running: Arc<AtomicBool>,
@@ -212,6 +228,7 @@ fn monitor_device_changes(
 // ============================================================================
 
 /// 获取所有设备名称
+#[cfg(not(all(target_os = "windows", feature = "imm-notification")))]
 fn get_device_names(host: &cpal::Host) -> Vec<String> {
     host.output_devices()
         .ok()
@@ -250,9 +267,10 @@ fn find_fallback_device(host: &cpal::Host, excluded_device: &str) -> Option<Stri
 // ============================================================================
 // Windows 平台：基于 IMMNotificationClient 的事件驱动实现（已禁用）
 // ============================================================================
-// 保留此模块供未来调试。默认使用轮询模式，因为 IMMNotificationClient 的
-// COM 回调触发和 previous_default 状态同步在运行时存在可靠性问题。
-// 如需启用，在 Cargo.toml 添加 `imm-notification` feature。
+// 默认不使用：IMMNotificationClient 的 COM 回调触发和 previous_default 状态同步
+// 在运行时存在可靠性问题，默认走轮询模式以保证功能稳定。
+// 如需启用：给构建加上 `imm-notification` feature，DeviceMonitor::start 会自动分派到
+// 本模块的 run_windows_monitor。
 // ============================================================================
 
 #[cfg(all(target_os = "windows", feature = "imm-notification"))]
@@ -619,7 +637,7 @@ mod windows_impl {
             let guid = PKEY_DEVICE_FRIENDLY_NAME.fmtid;
             let expected_data4 = [0xbf, 0x1a, 0xd1, 0xc9, 0x7c, 0x2b, 0x3e, 0x08];
 
-            assert_eq!(guid.data1, 0xa45c254e, "data1 mismatch");
+            assert_eq!(guid.data1, 0xa45c_254e, "data1 mismatch");
             assert_eq!(guid.data2, 0xdf08, "data2 mismatch");
             assert_eq!(guid.data3, 0x4e93, "data3 mismatch");
             assert_eq!(

@@ -71,9 +71,16 @@ describe('audioService', () => {
   it('wraps audio commands with correct payloads', async () => {
     await expectInvoke(() => getAudioDevices(), 'get_audio_devices')
     await expectInvoke(() => getCurrentAudioDevice(), 'get_current_audio_device')
+    // remember 默认 true:直接调用即视为用户主动选择,需要落盘记忆
     await expectInvoke(() => setAudioDevice('Speakers', 12.5), 'set_audio_device', {
       deviceName: 'Speakers',
       currentTime: 12.5,
+      remember: true,
+    })
+    await expectInvoke(() => setAudioDevice('Speakers', 12.5, false), 'set_audio_device', {
+      deviceName: 'Speakers',
+      currentTime: 12.5,
+      remember: false,
     })
     await expectInvoke(() => getExclusiveMode(), 'get_exclusive_mode')
     await expectInvoke(() => toggleExclusiveMode(true, 3), 'toggle_exclusive_mode', {
